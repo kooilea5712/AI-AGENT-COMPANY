@@ -4,13 +4,14 @@
 trả lời bằng văn bản thường (coi là xong) hoặc hết giới hạn bước. Model yếu hay trả tool call
 sai nên mọi lỗi đều được ĐƯA LẠI cho model dưới dạng kết quả tool để nó tự sửa, không làm sập vòng lặp.
 """
+import asyncio
 import json
-import re
 from dataclasses import dataclass
 from typing import Callable
 
 from ..tools.sandbox import JobTools, TOOL_SPECS, ToolError
 
+_TOOL_NAMES = {t["function"]["name"] for t in TOOL_SPECS}
 LogFn = Callable[[str, str], None]  # (loại sự kiện, nội dung)
 MAX_CONSECUTIVE_BAD = 5  # quá số lần tool call hỏng liên tiếp thì bỏ cuộc thay vì đốt quota
 
@@ -83,8 +84,10 @@ async def run_agent(llm, combo: str, system: str, user: str, tools: JobTools, lo
                 args = json.loads(raw) if isinstance(raw, str) else raw
                 if not isinstance(args, dict):
                     raise ValueError("arguments phải là object JSON")
-                result = getattr(tools, fn)(**args) if fn in {t["function"]["name"] for t in TOOL_SPECS} \
-                    else (_ for _ in ()).throw(ToolError(f"Không có tool '{fn}'"))
+                if fn not in _TOOL_NAMES:
+                    raise ToolError(f"Không có tool '{fn}'")
+                # Tool chạy ở thread riêng để lệnh dài (subprocess) không làm đứng SSE/API.
+                result = await asyncio.to_thread(getattr(tools, fn), **args)
                 bad = 0
                 log("tool", f"[{name}] {fn}({_short(args)}) -> {_short(result)}")
             except (ToolError, ValueError, TypeError, json.JSONDecodeError) as e:

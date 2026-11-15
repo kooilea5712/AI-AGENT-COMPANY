@@ -47,14 +47,14 @@ async def test_unknown_tool_and_escape_reported(tmp_path):
 
 async def test_step_limit(tmp_path):
     (tmp_path / "j").mkdir()
-    llm = FakeLLM([call("list_dir", "{}", str(i)) for i in range(10)])
+    llm = FakeLLM([call("write_file", '{"path":"f%d","content":"x"}' % i, str(i)) for i in range(10)])  # khác nhau để không dính bộ phát hiện lặp
     r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 3)
     assert not r.ok and "giới hạn" in r.reason
 
 
 async def test_gives_up_after_repeated_garbage(tmp_path):
     (tmp_path / "j").mkdir()
-    llm = FakeLLM([call("write_file", "xxx", str(i)) for i in range(10)])
+    llm = FakeLLM([call("write_file", "xxx%d" % i, str(i)) for i in range(10)])
     r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 20)
     assert not r.ok and "sai định dạng" in r.reason
 
@@ -74,3 +74,10 @@ async def test_json_in_content_fallback(tmp_path):
                    {"role": "assistant", "content": "xong"}])
     r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 5)
     assert r.ok and (tmp_path / "j" / "b.txt").exists()
+
+
+async def test_identical_call_loop_detected(tmp_path):
+    (tmp_path / "j").mkdir()
+    llm = FakeLLM([call("list_dir", "{}", str(i)) for i in range(10)])
+    r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 20)
+    assert not r.ok and "lặp" in r.reason and r.steps == 3
