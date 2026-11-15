@@ -36,7 +36,7 @@ def test_transition_table_is_closed():
     # Mọi trạng thái đích phải tồn tại, và trạng thái cuối không đi đâu nữa.
     for src, dsts in m.TRANSITIONS.items():
         assert dsts <= set(m.TRANSITIONS)
-    assert m.TRANSITIONS[m.DONE] == set() and m.TRANSITIONS[m.BLOCKED] == set()
+    assert m.TRANSITIONS[m.DONE] == set()
 
 
 def test_verdict_parsing():
@@ -168,3 +168,29 @@ async def test_upload_name_cannot_escape(orch):
     jid = o.create_job("x", [("..\\..\\evil.txt", b"hi")])
     assert (o.job_dir(jid) / "inputs" / "evil.txt").exists()
     assert not (o.job_dir(jid).parent / "evil.txt").exists()
+
+
+async def test_retry_blocked_qa_goes_back_to_executing_with_note(orch):
+    fail = say("KẾT QUẢ: FAIL lỗi X")
+    eng = [wf("deliverables/a.py", "x"), say("b")]
+    llm = Script(*eng, fail, *eng, fail, *eng, fail,          # hết 2 vòng sửa -> blocked
+                 wf("deliverables/a.py", "fixed"), say("b"), say("KẾT QUẢ: PASS"))
+    o = orch(llm)
+    jid = o.create_job("x")
+    o.set_state(jid, m.AWAITING_BRIEF)
+    o.approve_brief(jid)
+    o.set_state(jid, m.EXECUTING)
+    await o.run(jid)
+    assert o.get(jid)["state"] == m.BLOCKED and o.get(jid)["blocked_from"] == m.QA
+    o.retry(jid, "đừng dùng EXIF")
+    j = o.get(jid)
+    assert j["state"] == m.EXECUTING and j["fix_round"] == 0 and "đừng dùng EXIF" in j["note"] and j["error"] is None
+    await o.run(jid)
+    assert o.get(jid)["state"] == m.HANDOFF or o.get(jid)["state"] == m.BLOCKED
+
+
+def test_retry_only_when_blocked(orch):
+    o = orch(Script())
+    jid = o.create_job("x")
+    with pytest.raises(InvalidAction):
+        o.retry(jid)

@@ -110,7 +110,13 @@ function JobView({ id }: { id: string }) {
       <p><span className={"badge " + (WAITING_YOU.has(s) ? "warn" : s === "blocked" ? "bad" : s === "done" ? "ok" : "")}>{STATE_VI[s] ?? s}</span>
         {job.fix_round > 0 && <span className="muted"> · vòng sửa {job.fix_round}/2</span>}</p>
       {err && <p className="err">{err}</p>}
-      {s === "blocked" && <div className="card bad"><b>Job dừng:</b> {job.error}</div>}
+      {s === "blocked" && (
+        <div className="card bad">
+          <div><b>Job dừng:</b> {job.error}</div>
+          <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Hướng dẫn thêm cho agent (không bắt buộc)…" />
+          <button className="primary" onClick={act(() => api.retry(id, text))}>Tiếp tục từ bước đã dừng</button>
+        </div>
+      )}
 
       {s === "waiting_answer" && (
         <div className="card warn">

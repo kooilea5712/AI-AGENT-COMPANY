@@ -31,6 +31,7 @@ export const api = {
   answer: (id: string, text: string) => post(`/jobs/${id}/answer`, { text }),
   approveBrief: (id: string) => post(`/jobs/${id}/brief/approve`),
   rejectBrief: (id: string, text: string) => post(`/jobs/${id}/brief/reject`, { text }),
+  retry: (id: string, text: string) => post(`/jobs/${id}/retry`, { text }),
   approveHandoff: (id: string) => post(`/jobs/${id}/handoff/approve`),
   rejectHandoff: (id: string, text: string) => post(`/jobs/${id}/handoff/reject`, { text }),
   health: (deep: boolean) => req<any>(`/health${deep ? "?deep=true" : ""}`),

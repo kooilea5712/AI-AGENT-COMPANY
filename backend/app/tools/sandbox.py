@@ -4,8 +4,11 @@ GIỚI HẠN (đây chỉ là thay thế tạm cho Docker): chặn đường d�
 theo danh sách, nhưng lệnh chạy bằng quyền của bạn nên script Python do agent viết vẫn có thể làm
 bất cứ gì. Đừng coi nó là sandbox thật.
 """
+import base64
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from .. import config
@@ -21,9 +24,21 @@ class ToolError(Exception):
     """Lỗi trả lại cho model dưới dạng văn bản để nó tự sửa."""
 
 
+def _command_env() -> dict:
+    """PATH cho lệnh của agent: python của venv backend đứng đầu (có Pillow; `python` và `py` đều chạy được),
+    rồi các công cụ media cài bằng winget (PATH của tiến trình backend có thể cũ hơn registry)."""
+    from ..health import _fresh_path
+    extra = [str(Path(sys.executable).parent), r"C:\Program Files\Inkscape\bin"]
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(extra + [_fresh_path()])
+    return env
+
+
 class JobTools:
-    def __init__(self, job_dir: Path):
+    def __init__(self, job_dir: Path, vision=None):
         self.root = job_dir.resolve()
+        # vision(b64, mime, câu_hỏi) -> văn bản; do máy trạng thái truyền vào (gọi combo `vision`).
+        self.vision = vision
 
     def _safe(self, rel: str) -> Path:
         # resolve() xử lý cả '..' lẫn symlink; relative_to ném lỗi nếu thoát khỏi root.
@@ -58,11 +73,25 @@ class JobTools:
                 raise ToolError(f"Lệnh bị chặn (khớp '{pat}'). Hãy xin Giám đốc nếu thật sự cần.")
         try:
             r = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=self.root,
-                               capture_output=True, text=True, timeout=config.COMMAND_TIMEOUT,
+                               capture_output=True, text=True, timeout=config.COMMAND_TIMEOUT, env=_command_env(),
                                encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             raise ToolError(f"Lệnh quá {config.COMMAND_TIMEOUT}s nên bị dừng.")
         return f"exit={r.returncode}\n--stdout--\n{r.stdout[-6000:]}\n--stderr--\n{r.stderr[-3000:]}"
+
+    def describe_image(self, path: str, question: str = "Mô tả chi tiết ảnh này.") -> str:
+        """Để agent 'nhìn' ảnh qua model vision (tự kiểm của Chuyên viên media, bằng chứng của Kiểm định)."""
+        p = self._safe(path)
+        mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(p.suffix.lower())
+        if not mime:
+            raise ToolError("Chỉ xem được png/jpg/webp. SVG thì xuất PNG trước (inkscape file.svg -o file.png).")
+        if not p.is_file():
+            raise ToolError(f"Không có file: {path}")
+        if p.stat().st_size > 5_000_000:
+            raise ToolError("Ảnh quá 5 MB; hãy thu nhỏ trước (magick in.png -resize 1024x1024 out.png).")
+        if self.vision is None:
+            raise ToolError("Không có model vision trong ngữ cảnh này.")
+        return self.vision(base64.b64encode(p.read_bytes()).decode(), mime, question)
 
 
 # Schema theo chuẩn OpenAI function calling.
@@ -78,4 +107,6 @@ TOOL_SPECS = [
     _fn("list_dir", "Liệt kê thư mục trong job", {"path": {"type": "string"}}, []),
     _fn("run_command", "Chạy lệnh PowerShell với thư mục job làm thư mục hiện tại",
         {"command": {"type": "string"}}, ["command"]),
+    _fn("describe_image", "Nhìn một ảnh png/jpg/webp trong job bằng model vision và trả lời câu hỏi về nó",
+        {"path": {"type": "string"}, "question": {"type": "string"}}, ["path"]),
 ]

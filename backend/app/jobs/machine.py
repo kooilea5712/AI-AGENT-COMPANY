@@ -38,7 +38,8 @@ TRANSITIONS = {
     AWAITING_HANDOFF: {LESSONS, EXECUTING},       # trả lại bàn giao -> làm lại
     LESSONS: {DONE},
     DONE: set(),
-    BLOCKED: set(),  # bản thô: dừng hẳn, chủ studio tạo job mới. Chỗ này để mở rộng "tiếp tục" sau.
+    # Chủ studio bấm "tiếp tục": quay lại bước đã bị chặn (blocked_from). QA bị chặn thì quay về EXECUTING.
+    BLOCKED: {INTAKE, PLANNING, EXECUTING, HANDOFF},
 }
 
 
@@ -81,7 +82,7 @@ class Orchestrator:
 
     def _block(self, job_id: str, reason: str):
         self.event(job_id, "error", reason)
-        self.set_state(job_id, BLOCKED, error=reason)
+        self.set_state(job_id, BLOCKED, error=reason, blocked_from=self.get(job_id)["state"])
 
     # --- tạo job ------------------------------------------------------------
     def create_job(self, description: str, files: list[tuple[str, bytes]] | None = None) -> str:
@@ -122,6 +123,17 @@ class Orchestrator:
     def approve_handoff(self, job_id: str):
         self._require(job_id, AWAITING_HANDOFF)
         self.set_state(job_id, LESSONS)
+
+    def retry(self, job_id: str, note: str = ""):
+        """Tiếp tục job bị chặn từ đúng bước đã dừng, kèm hướng dẫn của chủ studio (nếu có)."""
+        j = self._require(job_id, BLOCKED)
+        src = j["blocked_from"] or INTAKE
+        # QA bị chặn nghĩa là đã hết vòng sửa: cho Kỹ sư làm lại với phản hồi mới và cấp lại đủ lượt.
+        target = EXECUTING if src == QA else src
+        fields = {"error": None, "fix_round": 0 if src in (QA, EXECUTING) else j["fix_round"]}
+        if note:
+            fields["note"] = f"CHỦ STUDIO HƯỚNG DẪN KHI TIẾP TỤC: {note}"
+        self.set_state(job_id, target, **fields)
 
     def reject_handoff(self, job_id: str, note: str):
         self._require(job_id, AWAITING_HANDOFF)
@@ -207,7 +219,7 @@ class Orchestrator:
     # Bước 4-5: thực thi + tự kiểm (Kỹ sư tự chạy sản phẩm trước khi báo xong)
     async def _do_executing(self, job_id: str):
         j, d = self.get(job_id), self.job_dir(job_id)
-        known = ["Chạy Python bằng `py`. pip install bị chặn nên chỉ dùng thư viện chuẩn trừ khi brief nói khác."]
+        known = ["Python có thư viện chuẩn và Pillow; pip install bị chặn."]
         if j["note"]:
             known.append("PHẢN HỒI CẦN XỬ LÝ (nguyên văn):\n" + j["note"])
         if self._lessons().strip() != "(chưa có)":

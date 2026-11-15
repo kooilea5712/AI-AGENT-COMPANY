@@ -115,6 +115,11 @@ async def reject_handoff(job_id: str, body: Text):
     return _act(job_id, orch.reject_handoff, body.text)
 
 
+@app.post("/jobs/{job_id}/retry")
+async def retry(job_id: str, body: Text):
+    return _act(job_id, orch.retry, body.text)
+
+
 @app.get("/jobs/{job_id}/events")
 async def events(job_id: str, after: int = 0):
     """SSE. Đọc sự kiện từ DB theo id tăng dần thay vì giữ hàng đợi trong RAM:

@@ -27,7 +27,7 @@ Cách thử: `backend\.venv\Scripts\python scripts\probe_tools.py <tag>...`
 ## OmniRoute
 
 - Nhà cung cấp đã có sẵn từ trước: `cloudflare-ai`, `llm7`. Đã thêm `ollama-local` (không cần khoá).
-- Bốn combo `brain`, `coder`, `vision` (→ `ollama-local/gemma4:12b`) và `fast` (→ `ollama-local/qwen3:4b`), chiến lược `priority`. Hiện **chỉ có Ollama**; bạn thêm các nhà cung cấp cloud lên trước trong dashboard (http://localhost:20128) để Ollama đứng cuối.
+- Bốn combo `brain`, `coder`, `vision` (→ `ollama-local/studio-gemma4-12b`) và `fast` (→ `ollama-local/studio-qwen3-4b`), chiến lược `priority`. Hiện **chỉ có Ollama**; bạn thêm các nhà cung cấp cloud lên trước trong dashboard (http://localhost:20128) để Ollama đứng cuối.
 - Mặc định OmniRoute nghe trên `0.0.0.0` không cần khoá. Đã khởi động lại với `OMNIROUTE_SERVER_HOST=127.0.0.1`; dùng `scripts\start-omniroute.ps1` để giữ như vậy.
 
 ## Hai bẫy đã gặp khi chạy thật

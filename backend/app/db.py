@@ -36,6 +36,11 @@ class DB:
         self.lock = threading.Lock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            # Migration nhẹ cho DB tạo từ bản trước: thêm cột blocked_from nếu chưa có.
+            cols = [r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")]
+            if "blocked_from" not in cols:
+                self.conn.execute("ALTER TABLE jobs ADD COLUMN blocked_from TEXT")
+                self.conn.commit()
 
     def execute(self, sql: str, params=()):
         with self.lock:

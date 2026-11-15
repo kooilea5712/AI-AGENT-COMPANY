@@ -50,3 +50,23 @@ def test_timeout(tools, monkeypatch):
     tools.root.mkdir()
     with pytest.raises(ToolError):
         tools.run_command("Start-Sleep 5")
+
+
+def test_command_env_has_pillow_and_media_tools(tools):
+    tools.root.mkdir()
+    out = tools.run_command("python -c 'import PIL; print(PIL.__version__)'; inkscape --version; ffmpeg -version | Select -First 1")
+    assert "exit=0" in out and "Inkscape" in out and "ffmpeg" in out.lower()
+
+
+def test_describe_image_rules(tools):
+    tools.root.mkdir()
+    (tools.root / "a.svg").write_text("<svg/>")
+    with pytest.raises(ToolError):
+        tools.describe_image("a.svg")          # SVG không xem trực tiếp được
+    (tools.root / "a.png").write_bytes(b"x")
+    with pytest.raises(ToolError):
+        tools.describe_image("a.png")          # chưa gắn vision
+    t = JobTools(tools.root, vision=lambda b64, mime, q: f"{mime}|{q}")
+    assert t.describe_image("a.png", "gì đây?") == "image/png|gì đây?"
+    with pytest.raises(ToolError):
+        t.describe_image("../x.png")
