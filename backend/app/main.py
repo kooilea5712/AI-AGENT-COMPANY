@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import config, health
+import re
+import time
+
+from fastapi.staticfiles import StaticFiles
+
+from . import config, health, staff
 from .db import DB
 from .jobs import machine
 from .llm.client import LLMClient
@@ -76,7 +81,7 @@ async def create_job(description: str = Form(...), files: list[UploadFile] = Fil
 @app.get("/jobs")
 def list_jobs():
     rows = db.query("SELECT id,title,state,fix_round,created_at,updated_at FROM jobs ORDER BY created_at DESC")
-    return [{**r, "step": machine.STEP_OF[r["state"]]} for r in rows]
+    return [{**r, "step": machine.STEP_OF[r["state"]], "actor": orch.actor_of(r["id"], r["state"])} for r in rows]
 
 
 @app.get("/jobs/{job_id}")
@@ -129,12 +134,79 @@ async def events(job_id: str, after: int = 0):
     async def gen():
         last = after
         while True:
-            for e in db.query("SELECT id,ts,kind,message FROM events WHERE job_id=? AND id>? ORDER BY id", (job_id, last)):
+            for e in db.query("SELECT id,ts,kind,message,actor FROM events WHERE job_id=? AND id>? ORDER BY id", (job_id, last)):
                 last = e["id"]
                 yield f"id: {last}\ndata: {json.dumps(e, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0.7)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+STATE_LABEL = {
+    "intake": "Tiếp nhận yêu cầu, viết brief", "waiting_answer": "Chờ chủ studio trả lời câu hỏi", "awaiting_brief": "Chờ chủ studio duyệt brief",
+    "planning": "Lập kế hoạch", "executing": "Thực thi và tự kiểm", "qa": "Kiểm định sản phẩm",
+    "handoff": "Viết bàn giao", "awaiting_handoff": "Chờ chủ studio duyệt bàn giao", "lessons": "Rút kinh nghiệm",
+    "done": "Hoàn tất", "blocked": "Dừng, chờ chủ studio quyết định",
+}
+
+
+@app.get("/jobs/{job_id}/flow")
+def job_flow(job_id: str):
+    """Luồng công việc của một job: các đoạn (ai làm, bước nào, từ lúc nào), các lần bàn giao giữa nhân viên,
+    và ai đang cầm việc. Dựng lại từ nhật ký sự kiện nên vẫn đúng sau khi backend khởi động lại."""
+    j = _job(job_id)
+    evs = db.query("SELECT id,ts,kind,message,actor FROM events WHERE job_id=? ORDER BY id", (job_id,))
+    marks = []   # (thời điểm, trạng thái bắt đầu)
+    for e in evs:
+        if e["kind"] != "state":
+            continue
+        m = re.search(r"(\w+) -> (\w+)$", e["message"])
+        if m:
+            marks.append((e["ts"], m.group(2)))
+        elif "trạng thái" in e["message"]:
+            marks.append((e["ts"], e["message"].rsplit(" ", 1)[-1]))
+    segs = []
+    for i, (ts, st) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else None
+        actor = orch.actor_of(job_id, st)
+        inside = [e for e in evs if e["ts"] >= ts and (end is None or e["ts"] < end)]
+        segs.append({"state": st, "label": STATE_LABEL.get(st, st), "step": machine.STEP_OF.get(st, 0), "actor": actor,
+                     "started": ts, "ended": end, "tool_calls": sum(1 for e in inside if e["kind"] == "tool"),
+                     "llm_calls": sum(1 for e in inside if e["kind"] == "llm" and "gọi combo" in e["message"]),
+                     "errors": sum(1 for e in inside if e["kind"] in ("error", "tool_error"))})
+    handoffs = []
+    for a, b in zip(segs, segs[1:]):
+        if a["actor"] and b["actor"] and a["actor"] != b["actor"]:
+            handoffs.append({"from": a["actor"], "to": b["actor"], "at": b["started"], "why": b["label"]})
+    cur = segs[-1] if segs else None
+    return {"job_id": job_id, "state": j["state"], "segments": segs, "handoffs": handoffs,
+            "current": cur and {"actor": cur["actor"], "label": cur["label"], "since": cur["started"],
+                                "working": j["state"] in machine.RUNNING, "waiting_owner": j["state"] in machine.WAITING or j["state"] == machine.BLOCKED}}
+
+
+@app.get("/staff")
+def get_staff():
+    """Danh bạ nhân viên + ai đang làm gì ở các job chưa xong."""
+    jobs = db.query("SELECT id,title,state FROM jobs WHERE state NOT IN ('done')")
+    busy: dict[str, list] = {}
+    for j in jobs:
+        who = orch.actor_of(j["id"], j["state"])
+        if who:
+            busy.setdefault(who, []).append({"id": j["id"], "title": j["title"], "state": j["state"], "label": STATE_LABEL.get(j["state"], j["state"])})
+    handled = {r["actor"]: r["n"] for r in db.query("SELECT actor, COUNT(DISTINCT job_id) n FROM events WHERE kind='tool' GROUP BY actor")}
+    out = []
+    for p in staff.STAFF:
+        tasks = busy.get(p["name"], [])
+        if not p["active"]:
+            status = "planned"
+        elif any(t["state"] in machine.RUNNING for t in tasks):
+            status = "working"
+        elif tasks:
+            status = "waiting"      # việc đang nằm ở người này nhưng cần họ (chủ studio) hành động
+        else:
+            status = "idle"
+        out.append({**p, "status": status, "tasks": tasks, "jobs_touched": handled.get(p["name"], 0)})
+    return {"staff": out, "models": staff.combo_models(), "llm_mode": config.LLM_MODE}
 
 
 def _files(job_id: str) -> list[dict]:
@@ -158,3 +230,10 @@ def get_file(job_id: str, path: str):
     if root not in p.parents or not p.is_file():
         raise HTTPException(404, "Không có file")
     return FileResponse(p, filename=p.name)
+
+
+# Giao diện build sẵn (frontend/dist) được phục vụ cùng nguồn với API: app exe chỉ cần mở cổng 8000.
+# Mount SAU CÙNG để không che các route API.
+_dist = config.ROOT / "frontend" / "dist"
+if _dist.exists():
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="ui")

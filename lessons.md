@@ -9,3 +9,7 @@
 
 <!-- job-20261115-223719-801 -->
 - Đảm bảo kiểm tra kỹ các file trong deliverables trước khi bàn giao.
+
+<!-- job-20261116-001659-5c6 -->
+- Đảm bảo brief rõ ràng ngay từ đầu để giảm thiểu số lần sửa đổi.
+- Kiểm tra kỹ các file trong deliverables trước khi bàn giao để tránh lỗi nhỏ.

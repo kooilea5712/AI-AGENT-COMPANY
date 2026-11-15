@@ -41,6 +41,10 @@ class DB:
             if "blocked_from" not in cols:
                 self.conn.execute("ALTER TABLE jobs ADD COLUMN blocked_from TEXT")
                 self.conn.commit()
+            ecols = [r["name"] for r in self.conn.execute("PRAGMA table_info(events)")]
+            if "actor" not in ecols:
+                self.conn.execute("ALTER TABLE events ADD COLUMN actor TEXT")
+                self.conn.commit()
 
     def execute(self, sql: str, params=()):
         with self.lock:

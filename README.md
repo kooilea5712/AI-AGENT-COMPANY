@@ -6,15 +6,39 @@ Bằng chứng chạy thử đầu cuối: `docs/nghiem-thu/`.
 
 ## Chạy
 
-Mỗi lệnh một cửa sổ PowerShell, từ thư mục gốc repo:
+**Cách chính: mở `Studio AI.exe`** (xem "Đóng gói exe" bên dưới). Nó tự bật Docker Desktop (nếu có), Ollama, OmniRoute (chỉ loopback) và
+backend, đợi sẵn sàng rồi mở giao diện trong cửa sổ riêng. Đóng cửa sổ thì nó tắt đúng những dịch vụ nó đã bật; dịch vụ chạy sẵn từ trước
+thì để nguyên. Nhật ký của launcher: `%APPDATA%\Studio AI\logs\` (launcher.log, backend.log).
+
+Chạy tay (để phát triển), mỗi lệnh một cửa sổ PowerShell, từ thư mục gốc repo:
 
 ```powershell
-.\scripts\start-omniroute.ps1   # tuỳ chọn, chỉ cần khi LLM_MODE=omniroute (bind loopback)
-.\scripts\start-backend.ps1     # http://127.0.0.1:8000  (docs: /docs)
-.\scripts\start-frontend.ps1    # http://127.0.0.1:5173
+.\scripts\start-omniroute.ps1   # chỉ cần khi LLM_MODE=omniroute (bind loopback)
+.\scripts\start-backend.ps1     # http://127.0.0.1:8000, đồng thời phục vụ giao diện build sẵn (frontend/dist)
+.\scripts\start-frontend.ps1    # tuỳ chọn: Vite dev server 5173 để sửa giao diện có hot reload
 ```
 
 Test: `backend\.venv\Scripts\python -m pytest backend -q`
+
+## Đóng gói exe
+
+```powershell
+cd frontend; npm run build        # build giao diện (exe dùng bản này, backend phục vụ)
+cd ..\electron; npm install      # lần đầu; nếu npm chặn postinstall: node node_modules\electron\install.js
+npm run build:exe                 # ra dist-app\Studio AI-win32-x64\Studio AI.exe
+```
+
+Exe là LỚP VỎ: nó dùng thư mục dự án này (backend/.venv, frontend/dist, jobs/), Ollama, OmniRoute và Docker đã cài trên máy, không đóng gói
+sẵn chúng. Đường dẫn dự án ghi trong `resources\studio-root.txt` cạnh exe (đổi được bằng biến `STUDIO_ROOT`). Chuyển dự án sang thư mục khác
+thì sửa file đó hoặc build lại. Muốn có biểu tượng trên Desktop: chuột phải `Studio AI.exe` > Send to > Desktop (create shortcut).
+
+## Giao diện
+
+- **Công việc:** danh sách job (tìm, lọc Cần bạn/Đang chạy/Xong); mỗi job có tab Tiến trình (ai đang cầm việc, 8 bước, sơ đồ bàn giao giữa nhân viên,
+  dòng thời gian), Tài liệu, Nhật ký (lọc theo nhân viên, tìm, tải .txt), File (xem trước ảnh/văn bản).
+- **Đội ngũ:** từng nhân viên: nhiệm vụ, công cụ, model, đang rảnh/làm/chờ bạn, việc đang giữ.
+- **Hệ thống:** dịch vụ, sandbox, công cụ dòng lệnh, thử từng combo.
+- Chế độ Sáng/Tối/Theo hệ thống (nút ở góc dưới thanh bên); thông báo khi job chuyển sang "chờ bạn" (toast, số trên tiêu đề, thông báo hệ thống nếu cho phép).
 
 ## Cấu hình (.env, mẫu ở .env.example)
 
@@ -32,10 +56,12 @@ backend/app/llm/client.py    client OpenAI-compatible duy nhất
 backend/app/agents/loop.py   vòng lặp agent bằng function calling (chịu model yếu)
 backend/app/tools/sandbox.py 4 tool khoá trong jobs/<mã-job>/
 backend/app/jobs/machine.py  máy trạng thái 8 bước, hai điểm dừng chờ người
-backend/app/main.py          API FastAPI + SSE
+backend/app/main.py          API FastAPI + SSE (+ /jobs/{id}/flow, /staff cho giao diện)
+backend/app/staff.py         danh bạ nhân viên: nhiệm vụ, công cụ, combo
 prompts/*.md                 prompt từng vai, nạp lúc chạy (sửa file là có hiệu lực ngay)
 jobs/<mã-job>/               brief.md plan.md log.md work/ deliverables/ ...
-frontend/                    React + Vite + TypeScript
+frontend/                    React + Vite + TypeScript (build ra frontend/dist, backend phục vụ)
+electron/                    vỏ exe: tự bật dịch vụ, cửa sổ riêng
 ollama/*.Modelfile           biến thể model với num_ctx 16384
 ```
 

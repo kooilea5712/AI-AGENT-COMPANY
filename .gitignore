@@ -8,3 +8,5 @@ frontend/dist/
 jobs/*
 !jobs/.gitkeep
 *.tsbuildinfo
+dist-app/
+electron/node_modules/

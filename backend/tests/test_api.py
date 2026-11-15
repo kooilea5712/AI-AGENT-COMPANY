@@ -63,3 +63,30 @@ def test_answer_really_schedules_job(client, monkeypatch):
             break
         time.sleep(0.1)
     assert main.orch.get(jid)["state"] == "blocked"   # job đã chạy (và dừng vì LLM giả báo lỗi)
+
+
+def test_flow_shows_handoffs_between_staff(client):
+    c, main = client
+    o = main.orch
+    jid = o.create_job("x")
+    (o.job_dir(jid) / "plan.md").write_text("VAI: media\nT1", encoding="utf-8")
+    for st in ("awaiting_brief", "planning", "executing", "qa", "handoff"):
+        o.set_state(jid, st)
+    f = c.get(f"/jobs/{jid}/flow").json()
+    assert [s["state"] for s in f["segments"]] == ["intake", "awaiting_brief", "planning", "executing", "qa", "handoff"]
+    assert [s["actor"] for s in f["segments"]][3] == "Chuyên viên media"     # vai lấy từ plan.md
+    pairs = [(h["from"], h["to"]) for h in f["handoffs"]]
+    assert ("Giám đốc điều phối", "Chủ studio") in pairs and ("Chuyên viên media", "Kiểm định") in pairs
+    assert f["current"]["actor"] == "Giám đốc điều phối" and f["current"]["working"] is True
+
+
+def test_staff_status(client):
+    c, main = client
+    o = main.orch
+    jid = o.create_job("x")                       # intake -> Giám đốc đang làm
+    st = {p["id"]: p for p in c.get("/staff").json()["staff"]}
+    assert st["director"]["status"] == "working" and st["director"]["tasks"][0]["id"] == jid
+    assert st["qa"]["status"] == "idle" and st["game"]["status"] == "planned"
+    o.set_state(jid, "awaiting_brief")
+    st = {p["id"]: p for p in c.get("/staff").json()["staff"]}
+    assert st["owner"]["status"] == "waiting" and st["director"]["status"] == "idle"

@@ -1,204 +1,144 @@
-import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import { API, api, Ev, FileRow, Job, JobRow } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, JobRow, StaffInfo } from "./api";
+import JobView from "./JobView";
+import System from "./System";
+import Team from "./Team";
+import { fmtDate, icon, STATE_VI, ThemeMode, tone, useTheme, WAITING_YOU } from "./lib";
 
-// Tám bước của thiết kế; job.step cho biết đang ở bước nào (bước 5 tự kiểm nằm trong bước 4).
-const STEPS = ["Tiếp nhận", "Duyệt brief", "Lập kế hoạch", "Thực thi", "Tự kiểm", "Kiểm định", "Bàn giao", "Rút kinh nghiệm"];
-const STATE_VI: Record<string, string> = {
-  intake: "Giám đốc đang tiếp nhận", waiting_answer: "Giám đốc hỏi lại bạn", awaiting_brief: "Chờ bạn duyệt brief",
-  planning: "Đang lập kế hoạch", executing: "Kỹ sư đang làm", qa: "Kiểm định đang kiểm",
-  handoff: "Đang viết bàn giao", awaiting_handoff: "Chờ bạn duyệt bàn giao", lessons: "Đang rút kinh nghiệm",
-  done: "Hoàn tất", blocked: "Dừng, cần bạn quyết định",
-};
-const WAITING_YOU = new Set(["waiting_answer", "awaiting_brief", "awaiting_handoff"]);
+type Page = "jobs" | "team" | "system";
+type Filter = "all" | "need" | "run" | "done";
 
 export default function App() {
-  const [tab, setTab] = useState<"jobs" | "system">("jobs");
-  const [sel, setSel] = useState<string | null>(null);
+  const [page, setPage] = useState<Page>("jobs");
+  const [sel, setSel] = useState<string | null>(() => { try { return localStorage.getItem("sel"); } catch { return null; } });
   const [jobs, setJobs] = useState<JobRow[]>([]);
-  const refresh = () => api.jobs().then(setJobs).catch(() => {});
+  const [info, setInfo] = useState<StaffInfo | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [toasts, setToasts] = useState<{ id: number; text: string; job: string }[]>([]);
+  const [theme, setTheme] = useTheme();
+  const seen = useRef<Record<string, string>>({});   // job -> trạng thái đã thấy lần trước, để báo khi job chuyển sang "chờ bạn"
+
+  const refresh = () => {
+    api.jobs().then((rows) => {
+      setOffline(false);
+      rows.forEach((j) => {
+        const was = seen.current[j.id];
+        if (was !== undefined && was !== j.state && WAITING_YOU.has(j.state)) {
+          const text = `${j.title.slice(0, 50)}: ${STATE_VI[j.state]}`;
+          setToasts((t) => [...t, { id: Date.now() + Math.random(), text, job: j.id }]);
+          try { if (Notification.permission === "granted") new Notification("Studio AI", { body: text }); } catch { /* không bắt buộc */ }
+        }
+        seen.current[j.id] = j.state;
+      });
+      setJobs(rows);
+    }).catch(() => setOffline(true));
+    api.staff().then(setInfo).catch(() => {});
+  };
   useEffect(() => { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); }, []);
+  useEffect(() => { try { sel ? localStorage.setItem("sel", sel) : localStorage.removeItem("sel"); } catch { /* bỏ qua */ } }, [sel]);
+  useEffect(() => { if (toasts.length) { const t = setTimeout(() => setToasts((x) => x.slice(1)), 7000); return () => clearTimeout(t); } }, [toasts]);
+
+  const need = jobs.filter((j) => WAITING_YOU.has(j.state)).length;
+  useEffect(() => { document.title = need ? `(${need}) Studio AI` : "Studio AI"; }, [need]);
+  const open = (id: string) => { setSel(id); setPage("jobs"); };
 
   return (
     <div className="app">
-      <header>
-        <b>Studio AI</b>
+      <aside className="side">
+        <div className="brand">🎬 <b>Studio AI</b></div>
         <nav>
-          <button className={tab === "jobs" ? "on" : ""} onClick={() => setTab("jobs")}>Công việc</button>
-          <button className={tab === "system" ? "on" : ""} onClick={() => setTab("system")}>Hệ thống</button>
+          <button className={page === "jobs" ? "on" : ""} onClick={() => setPage("jobs")}>📋 Công việc{need > 0 && <span className="count">{need}</span>}</button>
+          <button className={page === "team" ? "on" : ""} onClick={() => setPage("team")}>👥 Đội ngũ</button>
+          <button className={page === "system" ? "on" : ""} onClick={() => setPage("system")}>🛠 Hệ thống</button>
         </nav>
-      </header>
-      {tab === "system" ? <System /> : (
-        <div className="cols">
-          <aside>
-            <NewJob onCreated={(id) => { setSel(id); refresh(); }} />
-            <h3>Danh sách job</h3>
-            {jobs.length === 0 && <p className="muted">Chưa có job.</p>}
-            {jobs.map((j) => (
-              <div key={j.id} className={"jobrow" + (sel === j.id ? " sel" : "")} onClick={() => setSel(j.id)}>
-                <div>{j.title}</div>
-                <span className={"badge " + (WAITING_YOU.has(j.state) ? "warn" : j.state === "blocked" ? "bad" : j.state === "done" ? "ok" : "")}>
-                  {STATE_VI[j.state] ?? j.state}
-                </span>
-              </div>
-            ))}
-          </aside>
-          <main>{sel ? <JobView key={sel} id={sel} /> : <p className="muted">Chọn một job hoặc tạo job mới.</p>}</main>
+        <div className="grow" />
+        <div className="working">
+          {info?.staff.filter((p) => p.status === "working").map((p) => <div key={p.id} className="w-row" title={p.tasks[0]?.title}>{icon(p.name)} {p.name}<span className="pulse-dot" /></div>)}
+          {info && !info.staff.some((p) => p.status === "working") && <div className="muted small">Cả đội đang rảnh</div>}
         </div>
-      )}
+        <div className="theme">
+          {(["system", "light", "dark"] as ThemeMode[]).map((m) => (
+            <button key={m} className={theme === m ? "on" : ""} onClick={() => setTheme(m)} title={m === "system" ? "Theo hệ thống" : m === "light" ? "Sáng" : "Tối"}>{m === "system" ? "🖥" : m === "light" ? "☀️" : "🌙"}</button>
+          ))}
+        </div>
+      </aside>
+      <div className="content">
+        {offline && <div className="banner">Mất kết nối tới backend. Đang thử lại…</div>}
+        {page === "jobs" && (
+          <div className="cols">
+            <JobList jobs={jobs} sel={sel} setSel={setSel} onNew={() => setCreating(true)} />
+            <main>{sel && jobs.some((j) => j.id === sel) ? <JobView key={sel} id={sel} staff={info?.staff ?? []} /> : (
+              <div className="empty"><div>📋</div><p>Chọn một job ở danh sách bên trái, hoặc tạo job mới.</p><button className="primary" onClick={() => setCreating(true)}>+ Job mới</button></div>
+            )}</main>
+          </div>
+        )}
+        {page === "team" && <Team staff={info?.staff ?? []} models={info?.models ?? {}} mode={info?.llm_mode ?? ""} openJob={open} />}
+        {page === "system" && <System />}
+      </div>
+      {creating && <NewJob onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); open(id); refresh(); }} />}
+      <div className="toasts">{toasts.map((t) => <div key={t.id} className="toast" onClick={() => open(t.job)}>🔔 {t.text}</div>)}</div>
     </div>
   );
 }
 
-function NewJob({ onCreated }: { onCreated: (id: string) => void }) {
+function JobList({ jobs, sel, setSel, onNew }: { jobs: JobRow[]; sel: string | null; setSel: (id: string) => void; onNew: () => void }) {
+  const [q, setQ] = useState("");
+  const [f, setF] = useState<Filter>("all");
+  const shown = useMemo(() => jobs.filter((j) => {
+    if (q && !j.title.toLowerCase().includes(q.toLowerCase())) return false;
+    if (f === "need") return WAITING_YOU.has(j.state);
+    if (f === "run") return tone(j.state) === "run";
+    if (f === "done") return j.state === "done";
+    return true;
+  }), [jobs, q, f]);
+  const FILTERS: [Filter, string][] = [["all", "Tất cả"], ["need", "Cần bạn"], ["run", "Đang chạy"], ["done", "Xong"]];
+  return (
+    <section className="list">
+      <button className="primary wide" onClick={onNew}>+ Job mới</button>
+      <input placeholder="Tìm job…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="chips">{FILTERS.map(([k, v]) => <button key={k} className={f === k ? "on" : ""} onClick={() => setF(k)}>{v}</button>)}</div>
+      <div className="jobs">
+        {shown.length === 0 && <p className="muted">Không có job.</p>}
+        {shown.map((j) => (
+          <div key={j.id} className={"jobrow" + (sel === j.id ? " sel" : "")} onClick={() => setSel(j.id)}>
+            <div className="jt">{j.title}</div>
+            <div className="jm">
+              <span className={"badge " + tone(j.state)}>{STATE_VI[j.state] ?? j.state}</span>
+              <span className="muted small">{j.actor ? `${icon(j.actor)} ${j.actor}` : ""}</span>
+            </div>
+            <div className="muted small">{fmtDate(j.created_at)}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const [desc, setDesc] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     setBusy(true); setErr("");
-    try { const r = await api.create(desc, files); setDesc(""); setFiles([]); onCreated(r.id); }
-    catch (e) { setErr(String(e)); } finally { setBusy(false); }
+    try {
+      try { if (Notification.permission === "default") Notification.requestPermission(); } catch { /* không bắt buộc */ }
+      onCreated((await api.create(desc, files)).id);
+    } catch (e) { setErr(String(e)); setBusy(false); }
   };
   return (
-    <div className="card">
-      <h3>Tạo job mới</h3>
-      <textarea rows={5} placeholder="Mô tả việc cần làm…" value={desc} onChange={(e) => setDesc(e.target.value)} />
-      <input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
-      <button className="primary" disabled={busy || !desc.trim()} onClick={submit}>Tạo job</button>
-      {err && <p className="err">{err}</p>}
-    </div>
-  );
-}
-
-function JobView({ id }: { id: string }) {
-  const [job, setJob] = useState<Job | null>(null);
-  const [files, setFiles] = useState<FileRow[]>([]);
-  const [events, setEvents] = useState<Ev[]>([]);
-  const [text, setText] = useState("");
-  const [err, setErr] = useState("");
-  const logRef = useRef<HTMLDivElement>(null);
-
-  const load = () => { api.job(id).then(setJob).catch((e) => setErr(String(e))); api.files(id).then(setFiles).catch(() => {}); };
-  useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, [id]);
-
-  // SSE: EventSource tự nối lại và gửi Last-Event-ID, nên nhật ký không mất khi rớt mạng.
-  useEffect(() => {
-    const es = new EventSource(`${API}/jobs/${id}/events`);
-    es.onmessage = (m) => setEvents((old) => { const e: Ev = JSON.parse(m.data); return old.some((o) => o.id === e.id) ? old : [...old, e]; });
-    return () => es.close();
-  }, [id]);
-  useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [events]);
-
-  const act = (fn: () => Promise<unknown>) => async () => {
-    setErr("");
-    try { await fn(); setText(""); load(); } catch (e) { setErr(String(e)); }
-  };
-
-  if (!job) return <p className="muted">{err || "Đang tải…"}</p>;
-  const s = job.state;
-  return (
-    <div>
-      <h2>{job.title}</h2>
-      <div className="steps">
-        {STEPS.map((n, i) => {
-          const k = i + 1;
-          const cls = s === "blocked" ? "" : k < job.step || s === "done" ? "done" : k === job.step || (k === 5 && job.step === 4) ? "cur" : "";
-          return <div key={n} className={"step " + cls}><span>{k}</span>{n}</div>;
-        })}
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Job mới</h2>
+        <p className="muted">Mô tả việc cần làm. Giám đốc sẽ đọc, có thể hỏi lại, rồi viết brief cho bạn duyệt.</p>
+        <textarea autoFocus rows={7} placeholder="Ví dụ: Viết script Python đổi tên ảnh theo ngày chụp, có chế độ chạy thử…" value={desc} onChange={(e) => setDesc(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && desc.trim()) submit(); }} />
+        <label className="filepick">📎 Đính kèm file (không bắt buộc)<input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} /></label>
+        {files.length > 0 && <div className="muted small">{files.map((f) => f.name).join(", ")}</div>}
+        {err && <p className="err">{err}</p>}
+        <div className="row end"><button onClick={onClose}>Huỷ</button><button className="primary" disabled={busy || !desc.trim()} onClick={submit}>Tạo job <span className="muted">(Ctrl+Enter)</span></button></div>
       </div>
-      <p><span className={"badge " + (WAITING_YOU.has(s) ? "warn" : s === "blocked" ? "bad" : s === "done" ? "ok" : "")}>{STATE_VI[s] ?? s}</span>
-        {job.fix_round > 0 && <span className="muted"> · vòng sửa {job.fix_round}/2</span>}</p>
-      {err && <p className="err">{err}</p>}
-      {s === "blocked" && (
-        <div className="card bad">
-          <div><b>Job dừng:</b> {job.error}</div>
-          <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Hướng dẫn thêm cho agent (không bắt buộc)…" />
-          <button className="primary" onClick={act(() => api.retry(id, text))}>Tiếp tục từ bước đã dừng</button>
-        </div>
-      )}
-
-      {s === "waiting_answer" && (
-        <div className="card warn">
-          <h3>Giám đốc hỏi bạn</h3><pre>{job.questions}</pre>
-          <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Trả lời (có thể ghi 'dùng mặc định')" />
-          <button className="primary" disabled={!text.trim()} onClick={act(() => api.answer(id, text))}>Gửi trả lời</button>
-        </div>
-      )}
-
-      {job.brief && (
-        <details open={s === "awaiting_brief"}><summary>Brief</summary>
-          <div className="md"><Markdown>{job.brief}</Markdown></div>
-          {s === "awaiting_brief" && (
-            <div className="card warn">
-              <button className="primary" onClick={act(() => api.approveBrief(id))}>Duyệt brief</button>
-              <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ghi chú khi trả lại brief…" />
-              <button disabled={!text.trim()} onClick={act(() => api.rejectBrief(id, text))}>Trả lại brief</button>
-            </div>
-          )}
-        </details>
-      )}
-      {job.plan && <details><summary>Kế hoạch</summary><div className="md"><Markdown>{job.plan}</Markdown></div></details>}
-
-      {job.qa_reports.length > 0 && (
-        <details open><summary>Báo cáo Kiểm định ({job.qa_reports.length})</summary>
-          {job.qa_reports.map((q) => <div key={q.name}><b>{q.name}</b><div className="md"><Markdown>{q.text}</Markdown></div></div>)}
-        </details>
-      )}
-
-      {job.handoff && (
-        <details open={s === "awaiting_handoff"}><summary>HANDOFF.md</summary>
-          <div className="md"><Markdown>{job.handoff}</Markdown></div>
-        </details>
-      )}
-      {s === "awaiting_handoff" && (
-        <div className="card warn">
-          <button className="primary" onClick={act(() => api.approveHandoff(id))}>Duyệt bàn giao</button>
-          <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ghi chú khi trả lại bàn giao…" />
-          <button disabled={!text.trim()} onClick={act(() => api.rejectHandoff(id, text))}>Trả lại bàn giao</button>
-        </div>
-      )}
-
-      <h3>File ({files.length})</h3>
-      <ul className="files">{files.map((f) => (
-        <li key={f.path}><a href={`${API}/jobs/${id}/files/${f.path}`} target="_blank" rel="noreferrer">{f.path}</a> <span className="muted">{f.size} B</span></li>
-      ))}</ul>
-
-      <h3>Nhật ký chạy trực tiếp</h3>
-      <div className="log" ref={logRef}>
-        {events.map((e) => (
-          <div key={e.id} className={"ev " + e.kind}>
-            <span className="muted">{new Date(e.ts * 1000).toLocaleTimeString("vi-VN")}</span> <b>{e.kind}</b> {e.message}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function System() {
-  const [h, setH] = useState<any>(null);
-  const [deep, setDeep] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { api.health(false).then(setH).catch((e) => setH({ error: String(e) })); }, []);
-  const runDeep = async () => { setBusy(true); try { setDeep(await api.health(true)); } finally { setBusy(false); } };
-  if (!h) return <p className="muted">Đang kiểm tra…</p>;
-  if (h.error) return <p className="err">Không gọi được backend: {h.error}</p>;
-  const mark = (ok: boolean) => <span className={ok ? "okc" : "badc"}>{ok ? "✔" : "✘"}</span>;
-  return (
-    <div className="system">
-      <p className="muted">Chế độ LLM: <b>{h.llm_mode}</b> · {h.llm_base_url}</p>
-      <h3>Dịch vụ</h3>
-      <p>{mark(h.omniroute.ok)} OmniRoute {h.omniroute.status ?? h.omniroute.error}</p>
-      <p>{mark(h.ollama.ok)} Ollama {h.ollama.ok ? `— model: ${h.ollama.models.join(", ")}` : h.ollama.error}</p>
-      <h3>Công cụ dòng lệnh</h3>
-      {Object.entries<any>(h.tools).map(([k, v]) => <p key={k}>{mark(v.ok)} <b>{k}</b> <span className="muted">{v.version ?? "chưa cài"}</span></p>)}
-      <h3>Combo và model đang phục vụ</h3>
-      <p className="muted">Gọi thật từng combo, tuần tự (Ollama phải nạp model nên có thể mất vài chục giây).</p>
-      <button disabled={busy} onClick={runDeep}>{busy ? "Đang thử…" : "Thử từng combo"}</button>
-      {deep && Object.entries<any>(deep.combos).map(([k, v]) => (
-        <p key={k}>{mark(v.ok)} <b>{k}</b> → {v.ok ? v.served_by : v.error}</p>
-      ))}
     </div>
   );
 }

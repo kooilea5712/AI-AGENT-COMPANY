@@ -1,0 +1,16 @@
+{
+  "name": "studio-ai",
+  "productName": "Studio AI",
+  "version": "0.2.0",
+  "description": "Studio freelance AI: tự bật Ollama, OmniRoute, backend và mở giao diện",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build:exe": "node build.js"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.0",
+    "electron": "^33.0.0"
+  }
+}

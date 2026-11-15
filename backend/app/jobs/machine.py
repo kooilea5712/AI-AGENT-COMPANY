@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .. import config, prompts
+from .. import config, prompts, staff
 from ..agents.loop import run_agent
 from ..db import DB
 from ..tools.sandbox import JobTools
@@ -43,6 +43,14 @@ TRANSITIONS = {
 }
 
 
+# Ai chịu trách nhiệm ở từng trạng thái (giao diện vẽ luồng bàn giao từ bảng này).
+# EXECUTING là vai do plan.md chọn nên Orchestrator.actor_of() quyết định lúc chạy.
+STATE_ACTOR = {INTAKE: "Giám đốc điều phối", WAITING_ANSWER: staff.OWNER, AWAITING_BRIEF: staff.OWNER,
+               PLANNING: "Giám đốc điều phối", EXECUTING: "Kỹ sư phần mềm", QA: "Kiểm định",
+               HANDOFF: "Giám đốc điều phối", AWAITING_HANDOFF: staff.OWNER, LESSONS: "Giám đốc điều phối",
+               BLOCKED: staff.OWNER, DONE: None}
+
+
 class InvalidAction(Exception):
     pass
 
@@ -64,10 +72,11 @@ class Orchestrator:
             raise KeyError(job_id)
         return j
 
-    def event(self, job_id: str, kind: str, msg: str):
-        """Một nguồn sự thật cho nhật ký: DB (cho SSE/giao diện) và log.md (cho người mở thư mục job)."""
-        self.db.execute("INSERT INTO events(job_id, ts, kind, message) VALUES (?,?,?,?)",
-                        (job_id, time.time(), kind, msg))
+    def event(self, job_id: str, kind: str, msg: str, actor: str | None = None):
+        """Một nguồn sự thật cho nhật ký: DB (cho SSE/giao diện) và log.md (cho người mở thư mục job).
+        actor = ai gây ra sự kiện, để giao diện vẽ luồng bàn giao và lọc nhật ký theo nhân viên."""
+        self.db.execute("INSERT INTO events(job_id, ts, kind, message, actor) VALUES (?,?,?,?,?)",
+                        (job_id, time.time(), kind, msg, actor or staff.SYSTEM))
         with open(self.job_dir(job_id) / "log.md", "a", encoding="utf-8") as f:
             f.write(f"- `{time.strftime('%H:%M:%S')}` **{kind}** {msg}\n")
 
@@ -167,7 +176,7 @@ class Orchestrator:
     # --- các agent --------------------------------------------------------------
     async def _agent(self, job_id: str, who: str, combo: str, system: str, user: str):
         return await run_agent(self.llm, combo, system, user, JobTools(self.job_dir(job_id), self._vision_fn()),
-                               lambda k, m: self.event(job_id, k, m), config.MAX_STEPS_PER_TASK, who)
+                               lambda k, m: self.event(job_id, k, m, who), config.MAX_STEPS_PER_TASK, who)
 
     def _vision_fn(self):
         """Cầu nối cho tool describe_image: tool chạy ở thread riêng, còn LLMClient là async trên event loop chính."""
@@ -192,6 +201,12 @@ class Orchestrator:
         if first:
             self.event(job_id, "warn", f"plan.md không có dòng 'VAI:' hợp lệ, dùng Kỹ sư phần mềm")
         return prompts.ROLES["phần mềm"]
+
+    def actor_of(self, job_id: str, state: str) -> str | None:
+        """Nhân viên đang chịu trách nhiệm ở trạng thái này của job (EXIT: vai thực thi đọc từ plan.md)."""
+        if state == EXECUTING:
+            return self._role(job_id)[1]
+        return STATE_ACTOR.get(state)
 
     def _lessons(self) -> str:
         return self.lessons_path.read_text(encoding="utf-8") if self.lessons_path.exists() else "(chưa có)"
@@ -219,7 +234,7 @@ class Orchestrator:
         if j["asked"] >= 1:
             parts.append("Bạn đã hỏi một lượt rồi: KHÔNG hỏi thêm, tự chọn phương án mặc định và ghi giả định vào brief.")
         parts.append("Việc của bạn bây giờ: bước 1 (tiếp nhận). Hỏi lại nếu bắt buộc, hoặc viết brief.md.")
-        r = await self._agent(job_id, "Giám đốc", "brain", self._director_sys(), "\n\n".join(parts))
+        r = await self._agent(job_id, "Giám đốc điều phối", "brain", self._director_sys(), "\n\n".join(parts))
         # Model hay chèn một câu dẫn trước "CÂU HỎI:" nên tìm ở đầu dòng bất kỳ, không chỉ đầu văn bản.
         q = re.search(r"^[\s*#]*CÂU HỎI.*", r.text, re.M | re.S)
         if q and j["asked"] < 1:
@@ -234,7 +249,7 @@ class Orchestrator:
         d = self.job_dir(job_id)
         plan = d / "plan.md"
         before = plan.stat().st_mtime if plan.exists() else None
-        r = await self._agent(job_id, "Giám đốc", "brain", self._director_sys(),
+        r = await self._agent(job_id, "Giám đốc điều phối", "brain", self._director_sys(),
                               "Brief (brief.md) đã được chủ studio duyệt. Bước 3: đọc brief.md rồi viết plan.md.")
         if plan.exists() and (before is None or plan.stat().st_mtime > before):
             self.set_state(job_id, EXECUTING)
@@ -290,7 +305,7 @@ class Orchestrator:
         d = self.job_dir(job_id)
         target = d / "deliverables" / "HANDOFF.md"
         before = target.stat().st_mtime if target.exists() else None
-        r = await self._agent(job_id, "Giám đốc", "brain", self._director_sys(),
+        r = await self._agent(job_id, "Giám đốc điều phối", "brain", self._director_sys(),
                               "Kiểm định đã PASS toàn bộ (báo cáo mới nhất là qa-bao-cao-*.md). Bước 7: đọc brief.md, "
                               "báo cáo QA và deliverables/, rồi viết deliverables/HANDOFF.md "
                               "(đã làm gì, cách mở hoặc chạy, giới hạn đã biết, giả định đã dùng).")
@@ -301,7 +316,7 @@ class Orchestrator:
 
     # Bước 8: rút kinh nghiệm. Không quan trọng bằng sản phẩm nên lỗi ở đây không chặn job.
     async def _do_lessons(self, job_id: str):
-        r = await self._agent(job_id, "Giám đốc", "brain", self._director_sys(),
+        r = await self._agent(job_id, "Giám đốc điều phối", "brain", self._director_sys(),
                               "Chủ studio đã duyệt bàn giao. Bước 8: rút kinh nghiệm cho các job sau.")
         lines = [ln for ln in r.text.splitlines() if ln.strip().startswith("- ")][:3]
         if lines:

@@ -1,0 +1,23 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Studio AI</title>
+<style>
+ body{margin:0;background:#0e1117;color:#e6e9f0;font:14px system-ui,"Segoe UI",sans-serif;-webkit-app-region:drag;padding:28px;height:100vh;box-sizing:border-box;display:flex;flex-direction:column}
+ h1{margin:0 0 4px;font-size:22px} p{margin:0 0 18px;color:#8b95ab}
+ .row{display:flex;align-items:center;gap:12px;padding:9px 12px;border:1px solid #2a3242;border-radius:10px;margin-bottom:8px;background:#161b24}
+ .ic{width:22px;text-align:center}.nm{flex:1}.dt{color:#8b95ab;font-size:12px;max-width:230px;text-align:right}
+ .work .ic{animation:spin 1s linear infinite}.ok .ic{color:#4cc38a}.warn .ic{color:#e3a94a}.skip .ic{color:#8b95ab}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ #err{display:none;color:#ff7b6b;background:#3b1a17;border:1px solid #ff7b6b55;border-radius:10px;padding:10px;margin-top:8px;white-space:pre-wrap;font-size:13px}
+ #btns{display:none;gap:8px;margin-top:10px;-webkit-app-region:no-drag} button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid #2a3242;background:#161b24;color:#e6e9f0;cursor:pointer}
+ button.p{background:#6f93ff;color:#0b1020;border-color:#6f93ff;font-weight:600}
+</style></head><body>
+<h1>🎬 Studio AI</h1><p>Đang khởi động các dịch vụ…</p>
+<div id="list"></div><div id="err"></div>
+<div id="btns"><button class="p" onclick="studio.retry()">Thử lại</button><button onclick="studio.openLogs()">Mở nhật ký</button><button onclick="studio.quit()">Thoát</button></div>
+<script>
+ const NAMES={docker:"Docker Desktop (sandbox)",ollama:"Ollama (model local)",omniroute:"OmniRoute (cổng model)",backend:"Backend + giao diện",ui:"Mở giao diện"};
+ const ICON={work:"◐",ok:"●",warn:"▲",skip:"–"};
+ const list=document.getElementById("list");
+ for(const k of Object.keys(NAMES)){const d=document.createElement("div");d.className="row";d.id="r-"+k;d.innerHTML='<span class="ic">○</span><span class="nm">'+NAMES[k]+'</span><span class="dt"></span>';list.appendChild(d);}
+ studio.onStatus(s=>{const r=document.getElementById("r-"+s.id);if(!r)return;r.className="row "+s.state;r.querySelector(".ic").textContent=ICON[s.state]||"○";r.querySelector(".dt").textContent=s.detail||"";});
+ studio.onFatal(m=>{const e=document.getElementById("err");e.style.display="block";e.textContent=m;document.getElementById("btns").style.display="flex";});
+</script></body></html>
