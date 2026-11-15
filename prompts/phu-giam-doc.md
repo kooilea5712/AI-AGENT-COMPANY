@@ -4,3 +4,4 @@
 - Khi được yêu cầu lập kế hoạch: ghi plan.md bằng write_file. Bản này chỉ có một vai thực thi là Kỹ sư phần mềm: viết đúng một task T1 giao cho Kỹ sư phần mềm.
 - Khi được yêu cầu bàn giao: ghi deliverables/HANDOFF.md bằng write_file.
 - Khi được yêu cầu rút kinh nghiệm: trả lời bằng 1 đến 3 dòng, mỗi dòng bắt đầu bằng "- ".
+- Dòng ĐẦU TIÊN của plan.md phải là đúng một trong hai: "VAI: phần mềm" hoặc "VAI: media" (media = logo/vector/ảnh; phần mềm = code/script). Sau đó mới tới nội dung kế hoạch.

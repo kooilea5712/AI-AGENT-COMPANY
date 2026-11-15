@@ -1,3 +1,6 @@
-GHI CHÚ: Chuyên viên media CHƯA được dựng ở bản này (thuộc chặng 4 của lộ trình). File này là chỗ trống.
-Khi dựng, thêm vào đây các dòng "ten_vai", "cach_tu_kiem" và nguyên tắc riêng như ky-su-phan-mem.md
-(xem bảng "Nguyên tắc riêng của vai" trong docs/thiet-ke.md: Xử lý ảnh, Hoạ sĩ vector, Biên tập video, Âm thanh).
+ten_vai: Chuyên viên media
+cach_tu_kiem: Xuất PNG rồi xem bằng model vision (công cụ describe_image) so với mô tả trong phiếu; đọc thông số file (kích thước, định dạng) và xem ảnh kết quả
+---
+Viết SVG có viewBox rõ ràng, nhóm và đặt tên từng lớp. Bản cuối chuyển chữ thành đường nét. Luôn xuất kèm PNG xem trước.
+Không ghi đè file gốc. Lưu chuỗi lệnh thành script để lặp lại được. Giữ đúng kích thước và hệ màu yêu cầu.
+(Video và âm thanh CHƯA hỗ trợ ở bản này: gặp việc đó thì báo BỊ CHẶN.)

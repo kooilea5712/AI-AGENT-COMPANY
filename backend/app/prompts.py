@@ -17,9 +17,14 @@ def director_system(lessons: str, team: str) -> str:
     return _join(_read("hien-phap"), body, _read("phu-giam-doc"), _read("phu-moi-truong"))
 
 
-def engineer_system() -> str:
-    # ky-su-phan-mem.md: vài dòng "khoá: giá trị", dấu --- rồi nguyên tắc riêng của vai.
-    head, _, principles = _read("ky-su-phan-mem").partition("\n---\n")
+# Vai thực thi: tên trong plan.md ("VAI: ...") -> (file prompt, tên hiển thị, combo)
+ROLES = {"phần mềm": ("ky-su-phan-mem", "Kỹ sư phần mềm", "coder"),
+         "media": ("chuyen-vien-media", "Chuyên viên media", "coder")}
+
+
+def specialist_system(role_file: str) -> str:
+    # File vai: vài dòng "khoá: giá trị", dấu --- rồi nguyên tắc riêng của vai.
+    head, _, principles = _read(role_file).partition("\n---\n")
     meta = dict(line.split(":", 1) for line in head.splitlines() if ":" in line)
     body = (_read("khung-chuyen-vien").replace("{tên vai}", meta["ten_vai"].strip())
             .replace("{cách tự kiểm của vai}", meta["cach_tu_kiem"].strip())

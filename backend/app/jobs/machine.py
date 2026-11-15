@@ -166,16 +166,41 @@ class Orchestrator:
 
     # --- các agent --------------------------------------------------------------
     async def _agent(self, job_id: str, who: str, combo: str, system: str, user: str):
-        return await run_agent(self.llm, combo, system, user, JobTools(self.job_dir(job_id)),
+        return await run_agent(self.llm, combo, system, user, JobTools(self.job_dir(job_id), self._vision_fn()),
                                lambda k, m: self.event(job_id, k, m), config.MAX_STEPS_PER_TASK, who)
+
+    def _vision_fn(self):
+        """Cầu nối cho tool describe_image: tool chạy ở thread riêng, còn LLMClient là async trên event loop chính."""
+        loop = asyncio.get_running_loop()
+
+        def fn(b64: str, mime: str, question: str) -> str:
+            msgs = [{"role": "user", "content": [{"type": "text", "text": question},
+                                                  {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]}]
+            fut = asyncio.run_coroutine_threadsafe(self.llm.chat("vision", msgs, max_tokens=2000), loop)
+            return fut.result(timeout=600)["message"].get("content") or "(model vision trả nội dung trống)"
+        return fn
+
+    def _role(self, job_id: str) -> tuple[str, str, str]:
+        """Đọc dòng 'VAI: ...' đầu plan.md; không đọc được thì mặc định Kỹ sư phần mềm."""
+        plan = self.job_dir(job_id) / "plan.md"
+        first = plan.read_text(encoding="utf-8").strip().splitlines()[0] if plan.exists() and plan.read_text(encoding="utf-8").strip() else ""
+        m = re.match(r"\W*VAI\s*:\s*(.+)", first, re.I)
+        key = m.group(1).strip().lower() if m else ""
+        for name, role in prompts.ROLES.items():
+            if name in key:
+                return role
+        if first:
+            self.event(job_id, "warn", f"plan.md không có dòng 'VAI:' hợp lệ, dùng Kỹ sư phần mềm")
+        return prompts.ROLES["phần mềm"]
 
     def _lessons(self) -> str:
         return self.lessons_path.read_text(encoding="utf-8") if self.lessons_path.exists() else "(chưa có)"
 
     def _director_sys(self) -> str:
-        team = ("- Kỹ sư phần mềm: viết, chạy, test code, script (combo coder)\n"
+        team = ("- Kỹ sư phần mềm (VAI: phần mềm): viết, chạy, test code, script\n"
+                "- Chuyên viên media (VAI: media): logo SVG, vector, xử lý ảnh bằng Inkscape/ImageMagick/Pillow\n"
                 "- Kiểm định: chạy thật và đối chiếu tiêu chí, trả PASS/FAIL\n"
-                "- (Chuyên viên media: CHƯA có ở bản này; job cần ảnh/video/âm thanh thì nói rõ trong brief)")
+                "- (Video, âm thanh, game: CHƯA có ở bản này; job cần những thứ đó thì nói rõ trong brief)")
         return prompts.director_system(self._lessons(), team)
 
     # Bước 1: tiếp nhận
@@ -224,7 +249,8 @@ class Orchestrator:
             known.append("PHẢN HỒI CẦN XỬ LÝ (nguyên văn):\n" + j["note"])
         if self._lessons().strip() != "(chưa có)":
             known.append("Bài học từ job trước:\n" + self._lessons())
-        order = prompts.work_order(job_id, "T1", "Kỹ sư phần mềm", {
+        role_file, role_name, role_combo = self._role(job_id)
+        order = prompts.work_order(job_id, "T1", role_name, {
             "Bối cảnh": f"Job {job_id}: {j['title']}. Toàn bộ yêu cầu ở brief.md, phân công ở plan.md.",
             "Việc cần làm": "Thực hiện task T1 trong plan.md sao cho đạt mọi tiêu chí nghiệm thu trong brief.md.",
             "Đầu vào": "brief.md, plan.md, inputs/ (nếu có)",
@@ -233,7 +259,7 @@ class Orchestrator:
             "Ràng buộc": "Chỉ đọc/ghi trong thư mục job. Hệ thống tự ghi mọi lệnh và kết quả vào log.md; đừng tự ghi đè log.md.",
             "Điều đã biết": "\n".join(known)})
         (d / "work" / f"phieu-T1-vong{j['fix_round']}.md").write_text(order, encoding="utf-8")
-        r = await self._agent(job_id, "Kỹ sư", "coder", prompts.engineer_system(), order)
+        r = await self._agent(job_id, role_name, role_combo, prompts.specialist_system(role_file), order)
         (d / "work" / f"bao-cao-T1-vong{j['fix_round']}.md").write_text(r.text or f"(không có báo cáo: {r.reason})",
                                                                          encoding="utf-8")
         if not r.ok:

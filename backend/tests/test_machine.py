@@ -194,3 +194,38 @@ def test_retry_only_when_blocked(orch):
     jid = o.create_job("x")
     with pytest.raises(InvalidAction):
         o.retry(jid)
+
+
+async def test_role_selected_from_plan_first_line(orch):
+    o = orch(Script())
+    jid = o.create_job("x")
+    plan = o.job_dir(jid) / "plan.md"
+    plan.write_text("VAI: media\nT1 ...", encoding="utf-8")
+    assert o._role(jid)[1] == "Chuyên viên media"
+    plan.write_text("**VAI: phần mềm**\nT1", encoding="utf-8")
+    assert o._role(jid)[1] == "Kỹ sư phần mềm"
+    plan.write_text("không có dòng vai", encoding="utf-8")
+    assert o._role(jid)[1] == "Kỹ sư phần mềm"        # mặc định, có cảnh báo trong log
+
+
+async def test_vision_bridge_from_tool_thread(orch):
+    seen = {}
+
+    class V(Script):
+        async def chat(self, combo, messages, tools=None, max_tokens=4096):
+            seen["combo"], seen["msg"] = combo, messages[0]["content"]
+            return {"model": "v", "message": {"content": "một vòng tròn đỏ"}}
+
+    o = orch(V())
+    import asyncio
+    fn = o._vision_fn()   # phải tạo trong event loop chính; tool sau đó gọi nó từ thread khác
+    res = await asyncio.to_thread(fn, "QUJD", "image/png", "có gì?")
+    assert res == "một vòng tròn đỏ" and seen["combo"] == "vision"
+    assert seen["msg"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_media_role_prompt_loads():
+    from app import prompts
+    s = prompts.specialist_system("chuyen-vien-media")
+    assert "Chuyên viên media" in s and "viewBox" in s and "describe_image" in s
+    assert "{" not in s.split("Cách làm:")[1].split("\n")[0]   # không còn placeholder chưa điền ở khung chuyên viên
