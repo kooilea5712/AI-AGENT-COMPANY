@@ -53,7 +53,10 @@ Tool của agent chỉ là rào chắn mềm, KHÔNG phải sandbox thật:
 
 ## Đã biết / chưa làm
 
-- Job `blocked` là trạng thái cuối (chưa có nút "tiếp tục"); tạo job mới.
-- Chỉ một task T1 cho Kỹ sư; Chuyên viên media để trống (`prompts/chuyen-vien-media.md`).
+- Job `blocked`: bấm "Tiếp tục từ bước đã dừng" (kèm hướng dẫn nếu muốn); job quay lại đúng bước bị chặn, QA bị chặn thì quay về Thực thi với đủ 2 vòng sửa.
+- Chỉ một task T1 mỗi job. Giám đốc chọn vai ở dòng đầu `plan.md` (`VAI: phần mềm` hoặc `VAI: media`). Media = logo/vector/ảnh; video và âm thanh chưa hỗ trợ.
+- Agent dùng được `python` (venv backend, có Pillow), ffmpeg, magick, inkscape, và tool `describe_image` (model vision nhìn PNG/JPG).
+  Model vision KHÔNG đo được kích thước/độ trong suốt (đã gặp: nó đoán sai); prompt bắt agent đo bằng `magick identify`/Pillow.
+- Chất lượng thẩm mỹ của media còn yếu (xem `docs/nghiem-thu/logo-svg/`): QA chỉ kiểm được thứ đo được, mắt thẩm mỹ vẫn là bạn ở điểm duyệt bàn giao.
 - Giám đốc chỉ được hỏi một lượt; lessons.md ở gốc repo được nạp vào prompt Giám đốc/Kỹ sư.
 - Model local chạy tuần tự (một khoá trong `llm/client.py`).

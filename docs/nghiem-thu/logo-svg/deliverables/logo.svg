@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Tách cà phê -->
+  <g id="coffee_cup" fill="#8B4513">
+    <path d="M160,300h192c30,0,50,20,50,50s-20,50-50,50h-192c-30,0-50-20-50-50s20-50,50-50z" />
+    <path d="M150,300h212v40h-212z" />
+    <rect x="140" y="340" width="232" height="30" rx="15" />
+  </g>
+  <!-- Mặt trời -->
+  <g id="sun" fill="#FF8C00">
+    <circle cx="256" cy="180" r="70" />
+    <g id="sun_rays">
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(0, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(45, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(90, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(135, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(180, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(225, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(270, 256, 180)" />
+      <rect x="248" y="60" width="16" height="40" rx="8" transform="rotate(315, 256, 180)" />
+    </g>
+  </g>
+</svg>
