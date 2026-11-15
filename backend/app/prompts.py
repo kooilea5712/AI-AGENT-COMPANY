@@ -8,13 +8,18 @@ def _read(name: str) -> str:
     return (config.PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
 
 
+def _env_note() -> str:
+    """Phụ lục môi trường phải khớp chế độ sandbox: container Linux (bash) hay PowerShell trên máy."""
+    return _read("phu-moi-truong-docker" if config.SANDBOX_MODE == "docker" else "phu-moi-truong")
+
+
 def _join(*parts: str) -> str:
     return "\n\n".join(parts)
 
 
 def director_system(lessons: str, team: str) -> str:
     body = _read("giam-doc").replace("{danh_sách_vai_và_năng_lực}", team).replace("{nội_dung_lessons.md}", lessons)
-    return _join(_read("hien-phap"), body, _read("phu-giam-doc"), _read("phu-moi-truong"))
+    return _join(_read("hien-phap"), body, _read("phu-giam-doc"), _env_note())
 
 
 # Vai thực thi: tên trong plan.md ("VAI: ...") -> (file prompt, tên hiển thị, combo)
@@ -29,11 +34,11 @@ def specialist_system(role_file: str) -> str:
     body = (_read("khung-chuyen-vien").replace("{tên vai}", meta["ten_vai"].strip())
             .replace("{cách tự kiểm của vai}", meta["cach_tu_kiem"].strip())
             .replace("{nguyên tắc riêng của vai}", principles.strip()))
-    return _join(_read("hien-phap"), body, _read("phu-moi-truong"))
+    return _join(_read("hien-phap"), body, _env_note())
 
 
 def qa_system() -> str:
-    return _join(_read("hien-phap"), _read("kiem-dinh"), _read("phu-kiem-dinh"), _read("phu-moi-truong"))
+    return _join(_read("hien-phap"), _read("kiem-dinh"), _read("phu-kiem-dinh"), _env_note())
 
 
 def work_order(job_id: str, task_id: str, role: str, fields: dict[str, str]) -> str:

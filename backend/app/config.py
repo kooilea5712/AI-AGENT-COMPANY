@@ -33,5 +33,11 @@ DIRECT_MODELS = {
 MAX_STEPS_PER_TASK = int(os.getenv("MAX_STEPS_PER_TASK", "25"))
 MAX_FIX_ROUNDS = 2  # theo thiết kế: tối đa hai vòng sửa sau FAIL
 COMMAND_TIMEOUT = int(os.getenv("COMMAND_TIMEOUT", "60"))
+# Chạy lệnh của agent: docker (container cô lập, khuyên dùng) hoặc local (PowerShell + danh sách đen).
+SANDBOX_MODE = os.getenv("SANDBOX_MODE", "docker")
+SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "studio-sandbox")
+SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "none")
+SANDBOX_MEMORY = os.getenv("SANDBOX_MEMORY", "2g")
+SANDBOX_CPUS = os.getenv("SANDBOX_CPUS", "2")
 
 REQUIRED_CLI_TOOLS = ["git", "python", "node", "ffmpeg", "ffprobe", "magick", "inkscape"]

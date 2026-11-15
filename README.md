@@ -41,15 +41,22 @@ ollama/*.Modelfile           biến thể model với num_ctx 16384
 `prompts/phu-*.md` là phụ lục do code thêm (giao thức đọc kết quả, môi trường Windows); các file còn lại lấy nguyên văn từ thiết kế.
 Muốn thay vòng lặp bằng CrewAI/LangGraph: chỉ cần thay `agents/loop.py:run_agent` (cùng chữ ký) và giữ `machine.py`.
 
-## Giới hạn của "sandbox" hiện tại (đọc kỹ)
+## Sandbox
 
-Tool của agent chỉ là rào chắn mềm, KHÔNG phải sandbox thật:
-- Chặn đường dẫn thoát khỏi `jobs/<mã-job>/` cho `read_file`/`write_file`/`list_dir` (có test).
-- `run_command` chạy PowerShell với thư mục job làm thư mục hiện tại, timeout 60 giây, và từ chối lệnh khớp danh sách đen theo từ khoá
-  (xoá đệ quy, curl/wget, pip/npm install, winget, shutdown…). Danh sách đen dễ bị lách.
-- Lệnh chạy bằng quyền tài khoản của bạn. Script Python agent viết ra vẫn có thể đọc/ghi mọi nơi bạn có quyền, và có mạng.
-  `cd ..` hay đường dẫn tuyệt đối trong chính lệnh không bị chặn (chỉ chuỗi `..\` bị từ chối).
-- Hệ quả: chỉ chạy job bạn tin, đừng cho agent xử lý file/tài liệu lạ. Docker (chặng sau) mới cô lập thật.
+`SANDBOX_MODE=docker` (mặc định trong `.env`): mỗi lệnh của agent chạy trong một container dùng một lần từ image `studio-sandbox`
+(Debian + Python 3.12 + Pillow + ffmpeg + ImageMagick 7 + Inkscape + git):
+`--network none`, 2 GB RAM, 2 CPU, tối đa 256 tiến trình, bỏ hết capability, chỉ mount thư mục `jobs/<mã-job>/` tại `/job`.
+Hết thời gian thì `docker kill` đúng container. Có 6 test Docker thật (`backend/tests/test_docker_sandbox.py`: không thấy file host,
+không mạng, `rm -rf /` không ảnh hưởng host, timeout dọn container).
+
+Dựng image một lần (khoảng 1,3 GB): `docker build -t studio-sandbox docker/sandbox`. Cần Docker Desktop đang chạy.
+Lệnh trong container là bash/Linux; prompt môi trường tự đổi theo chế độ (`prompts/phu-moi-truong-docker.md`).
+
+Còn lại cần biết:
+- `read_file`/`write_file`/`list_dir` chạy trên host, chặn thoát khỏi thư mục job (có test). Container không phải ranh giới bảo mật tuyệt đối
+  (chung kernel với VM của Docker), nhưng đủ cho agent chạy script không đáng tin trên máy cá nhân.
+- Giờ trong container là UTC: tên file đặt theo ngày sửa file (không có EXIF) sẽ lệch múi giờ so với giờ máy bạn.
+- `SANDBOX_MODE=local` (khi chưa có Docker) chỉ là PowerShell + danh sách đen từ khoá, KHÔNG cô lập: script agent viết ra làm được mọi thứ bạn làm được.
 
 ## Đã biết / chưa làm
 

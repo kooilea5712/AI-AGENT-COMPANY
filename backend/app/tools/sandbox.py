@@ -1,14 +1,18 @@
 """Tool cho agent, khoá trong jobs/<mã-job>/.
 
-GIỚI HẠN (đây chỉ là thay thế tạm cho Docker): chặn đường dẫn thoát ra ngoài và vài lệnh nguy hiểm
-theo danh sách, nhưng lệnh chạy bằng quyền của bạn nên script Python do agent viết vẫn có thể làm
-bất cứ gì. Đừng coi nó là sandbox thật.
+Hai chế độ chạy lệnh (config.SANDBOX_MODE):
+- docker (mặc định): mỗi lệnh chạy trong một container dùng một lần, không mạng, giới hạn RAM/CPU/số tiến trình,
+  chỉ mount thư mục job. Đây là sandbox thật.
+- local: PowerShell trên máy bạn + danh sách đen từ khoá. CHỈ là rào chắn mềm: script do agent viết vẫn làm được
+  bất cứ gì bạn làm được. Dùng khi chưa có Docker.
+read_file/write_file/list_dir luôn chạy trên host và luôn bị chặn thoát khỏi thư mục job.
 """
 import base64
 import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from .. import config
@@ -68,6 +72,8 @@ class JobTools:
         return "\n".join(sorted(f"{c.name}{'/' if c.is_dir() else ''}" for c in p.iterdir())) or "(trống)"
 
     def run_command(self, command: str) -> str:
+        if config.SANDBOX_MODE == "docker":
+            return self._run_docker(command)
         for pat in BLOCKED:
             if re.search(pat, command, re.I):
                 raise ToolError(f"Lệnh bị chặn (khớp '{pat}'). Hãy xin Giám đốc nếu thật sự cần.")
@@ -77,6 +83,28 @@ class JobTools:
                                encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             raise ToolError(f"Lệnh quá {config.COMMAND_TIMEOUT}s nên bị dừng.")
+        return f"exit={r.returncode}\n--stdout--\n{r.stdout[-6000:]}\n--stderr--\n{r.stderr[-3000:]}"
+
+    def _run_docker(self, command: str) -> str:
+        """Một container mỗi lệnh. Cô lập đến từ container chứ không phải danh sách đen, nên không lọc từ khoá."""
+        name = f"studio-{uuid.uuid4().hex[:10]}"
+        cmd = ["docker", "run", "--rm", "--name", name,
+               "--network", config.SANDBOX_NETWORK,        # mặc định none: không ra mạng, không tải được gì
+               "--memory", config.SANDBOX_MEMORY, "--cpus", config.SANDBOX_CPUS, "--pids-limit", "256",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+               "--mount", f"type=bind,source={self.root},target=/job", "-w", "/job",
+               config.SANDBOX_IMAGE, "bash", "-c", command]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=config.COMMAND_TIMEOUT,
+                               encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
+            # Giết CLI không giết container: phải docker kill đúng tên.
+            subprocess.run(["docker", "kill", name], capture_output=True, timeout=30)
+            raise ToolError(f"Lệnh quá {config.COMMAND_TIMEOUT}s nên bị dừng.")
+        except FileNotFoundError:
+            raise ToolError("Không tìm thấy docker. Cài Docker Desktop hoặc đặt SANDBOX_MODE=local.")
+        if r.returncode == 125 or (r.returncode == 126 and "docker" in r.stderr.lower()):  # lỗi của docker, không phải của lệnh
+            raise ToolError(f"Docker không chạy được lệnh: {r.stderr.strip()[:400]}")
         return f"exit={r.returncode}\n--stdout--\n{r.stdout[-6000:]}\n--stderr--\n{r.stderr[-3000:]}"
 
     def describe_image(self, path: str, question: str = "Mô tả chi tiết ảnh này.") -> str:

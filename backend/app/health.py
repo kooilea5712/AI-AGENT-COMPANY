@@ -59,6 +59,24 @@ async def _combo(client: httpx.AsyncClient, name: str) -> dict:
         return {"ok": False, "error": str(e)[:300]}
 
 
+def _sandbox() -> dict:
+    """Chế độ sandbox + (nếu docker) engine có chạy và image đã dựng chưa."""
+    info = {"mode": config.SANDBOX_MODE, "network": config.SANDBOX_NETWORK}
+    if config.SANDBOX_MODE != "docker":
+        return {**info, "ok": True, "note": "local: chỉ là rào chắn mềm, không cô lập thật"}
+    docker = shutil.which("docker") or shutil.which("docker", path=_fresh_path())
+    if not docker:
+        return {**info, "ok": False, "error": "không tìm thấy docker"}
+    try:
+        r = subprocess.run([docker, "image", "inspect", config.SANDBOX_IMAGE, "--format", "{{.Size}}"],
+                           capture_output=True, text=True, timeout=20)
+    except Exception as e:  # noqa: BLE001
+        return {**info, "ok": False, "error": str(e)[:200]}
+    if r.returncode != 0:
+        return {**info, "ok": False, "error": f"chưa có image '{config.SANDBOX_IMAGE}' hoặc engine tắt: {r.stderr.strip()[:200]}"}
+    return {**info, "ok": True, "image": config.SANDBOX_IMAGE}
+
+
 async def check(deep: bool = False) -> dict:
     """deep=True gọi thật từng combo (chậm: Ollama phải nạp model). Mặc định chỉ kiểm cổng và công cụ."""
     result: dict = {"llm_mode": config.LLM_MODE, "llm_base_url": config.LLM_BASE_URL}
@@ -82,4 +100,5 @@ async def check(deep: bool = False) -> dict:
             for name in config.COMBOS:
                 result["combos"][name] = await _combo(c, name)
     result["tools"] = {t: _tool(t) for t in config.REQUIRED_CLI_TOOLS}
+    result["sandbox"] = _sandbox()
     return result
