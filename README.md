@@ -18,9 +18,10 @@ Test: `backend\.venv\Scripts\python -m pytest backend -q`
 
 ## Cấu hình (.env, mẫu ở .env.example)
 
-- `LLM_MODE=direct`: gọi thẳng Ollama, ánh xạ combo -> model (`DIRECT_MODEL_*`). Dùng khi OmniRoute chưa có khoá cloud.
-- `LLM_MODE=omniroute`: gửi tên combo (`brain/coder/fast/vision`) tới OmniRoute. **Trước khi dùng, nâng `requestQueue.maxWaitMs`
-  (mặc định 15000) trong cài đặt resilience của OmniRoute**: model local nạp/sinh lâu hơn 15 giây sẽ bị cắt bằng lỗi 504.
+- `LLM_MODE=direct`: gọi thẳng Ollama, ánh xạ combo -> model (`DIRECT_MODEL_*`). Dùng khi OmniRoute không chạy.
+- `LLM_MODE=omniroute`: gửi tên combo (`brain/coder/fast/vision`) tới OmniRoute. Mặc định OmniRoute cắt yêu cầu sau 15 giây (lỗi 504) và
+  giá trị toàn cục không chỉnh được. Cách chỉnh thật: dashboard > Providers > Ollama > sửa kết nối `ollama-local` >
+  ô **Max Queue Wait (ms)** = 120000 (tối đa). Đã đặt; kết nối cloud mới thêm cũng nên đặt nếu model của chúng chậm.
 - Khoá API cloud nhập trong dashboard OmniRoute, không ghi vào repo.
 
 ## Cấu trúc
