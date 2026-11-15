@@ -92,6 +92,14 @@ async def test_director_question_then_answer(orch):
     assert "JPG" in (o.job_dir(jid) / "answers.md").read_text(encoding="utf-8")
 
 
+async def test_question_with_preamble_is_recognized(orch):
+    o = orch(Script(say("Cần làm rõ vài điều.\n\nCÂU HỎI:\n1. Định dạng? (mặc định JPG)")))
+    jid = o.create_job("x")
+    await o.run(jid)
+    j = o.get(jid)
+    assert j["state"] == m.WAITING_ANSWER and j["questions"].startswith("CÂU HỎI")
+
+
 async def test_reject_brief_requires_new_brief(orch):
     # Nếu Giám đốc không ghi lại brief.md sau khi bị trả thì job không được lọt qua điểm duyệt.
     llm = Script(wf("brief.md", "v1"), say("ok"), say("không sửa gì"))

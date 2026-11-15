@@ -39,3 +39,27 @@ def test_file_download_cannot_escape(client, tmp_path):
     assert c.get(f"/jobs/{jid}/files/inputs").status_code == 404
     assert c.get(f"/jobs/{jid}/files/..%5C..%5Csecret.txt").status_code == 404
     assert c.get(f"/jobs/{jid}/files/log.md").status_code == 200
+
+
+def test_answer_really_schedules_job(client, monkeypatch):
+    """Không chặn schedule: kiểm hành động của chủ studio thật sự khởi động lại job (không 500, không đứng im)."""
+    import time
+    c, main = client
+    monkeypatch.undo()  # bỏ chặn schedule của fixture
+    from app import config
+    monkeypatch.setattr(config, "JOBS_DIR", main.orch.jobs_dir)
+
+    class Boom:
+        async def chat(self, *a, **k):
+            raise RuntimeError("không có LLM trong test")
+
+    main.orch.llm = Boom()
+    jid = main.orch.create_job("x")
+    main.orch.set_state(jid, "waiting_answer", questions="CÂU HỎI: ?")
+    r = c.post(f"/jobs/{jid}/answer", json={"text": "mặc định"})
+    assert r.status_code == 200
+    for _ in range(40):
+        if main.orch.get(jid)["state"] != "intake":
+            break
+        time.sleep(0.1)
+    assert main.orch.get(jid)["state"] == "blocked"   # job đã chạy (và dừng vì LLM giả báo lỗi)

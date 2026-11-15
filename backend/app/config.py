@@ -23,11 +23,11 @@ OMNIROUTE_URL = os.getenv("OMNIROUTE_URL", "http://localhost:20128")
 LLM_MODE = os.getenv("LLM_MODE", "omniroute")  # omniroute | direct
 COMBOS = ["brain", "coder", "fast", "vision"]
 DIRECT_MODELS = {
-    "brain": os.getenv("DIRECT_MODEL_BRAIN", "gemma4:12b"),
+    "brain": os.getenv("DIRECT_MODEL_BRAIN", "studio-gemma4-12b"),
     # qwen2.5-coder:14b bị loại: trả tool call dạng JSON trong content và lặp mãi (xem docs/moi-truong.md).
-    "coder": os.getenv("DIRECT_MODEL_CODER", "gemma4:12b"),
-    "fast": os.getenv("DIRECT_MODEL_FAST", "qwen3:4b"),
-    "vision": os.getenv("DIRECT_MODEL_VISION", "gemma4:12b"),
+    "coder": os.getenv("DIRECT_MODEL_CODER", "studio-gemma4-12b"),
+    "fast": os.getenv("DIRECT_MODEL_FAST", "studio-qwen3-4b"),
+    "vision": os.getenv("DIRECT_MODEL_VISION", "studio-gemma4-12b"),
 }
 
 MAX_STEPS_PER_TASK = int(os.getenv("MAX_STEPS_PER_TASK", "25"))

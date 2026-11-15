@@ -183,8 +183,10 @@ class Orchestrator:
             parts.append("Bạn đã hỏi một lượt rồi: KHÔNG hỏi thêm, tự chọn phương án mặc định và ghi giả định vào brief.")
         parts.append("Việc của bạn bây giờ: bước 1 (tiếp nhận). Hỏi lại nếu bắt buộc, hoặc viết brief.md.")
         r = await self._agent(job_id, "Giám đốc", "brain", self._director_sys(), "\n\n".join(parts))
-        if r.text.strip().startswith("CÂU HỎI") and j["asked"] < 1:
-            self.set_state(job_id, WAITING_ANSWER, questions=r.text.strip(), asked=j["asked"] + 1)
+        # Model hay chèn một câu dẫn trước "CÂU HỎI:" nên tìm ở đầu dòng bất kỳ, không chỉ đầu văn bản.
+        q = re.search(r"^[\s*#]*CÂU HỎI.*", r.text, re.M | re.S)
+        if q and j["asked"] < 1:
+            self.set_state(job_id, WAITING_ANSWER, questions=q.group(0).strip(), asked=j["asked"] + 1)
         elif brief.exists() and (before is None or brief.stat().st_mtime > before):
             self.set_state(job_id, AWAITING_BRIEF)
         else:

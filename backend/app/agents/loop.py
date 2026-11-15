@@ -51,6 +51,7 @@ async def run_agent(llm, combo: str, system: str, user: str, tools: JobTools, lo
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     bad = 0
     recent: list[str] = []
+    empty = 0
     for step in range(1, max_steps + 1):
         log("llm", f"[{name}] bước {step}: gọi combo '{combo}'")
         try:
@@ -66,7 +67,14 @@ async def run_agent(llm, combo: str, system: str, user: str, tools: JobTools, lo
             if calls:
                 log("llm", f"[{name}] tool call nằm trong content, đã tự tách ({len(calls)})")
                 msg = {"role": "assistant", "content": None}
+        if not calls and not (msg.get("content") or "").strip() and empty < 2:
+            # Model "suy nghĩ" (gemma4) đôi khi hết lượt mà content trống: nhắc rồi hỏi lại.
+            empty += 1
+            log("warn", f"[{name}] model trả nội dung trống, nhắc lần {empty}")
+            messages.append({"role": "user", "content": "Câu trả lời của bạn trống. Hãy gọi công cụ cần thiết hoặc trả lời bằng văn bản."})
+            continue
         if not calls:
+            log("final", f"[{name}] {msg.get('content') or '(trống)'}")  # để chủ studio thấy agent đã nói gì
             return AgentResult(msg.get("content") or "", step, True)
 
         # Lưu đúng lượt assistant (có tool_calls) vào lịch sử trước khi trả kết quả tool.

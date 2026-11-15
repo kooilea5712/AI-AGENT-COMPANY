@@ -76,6 +76,13 @@ async def test_json_in_content_fallback(tmp_path):
     assert r.ok and (tmp_path / "j" / "b.txt").exists()
 
 
+async def test_empty_reply_is_nudged(tmp_path):
+    (tmp_path / "j").mkdir()
+    llm = FakeLLM([{"role": "assistant", "content": ""}, {"role": "assistant", "content": "xong"}])
+    r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 5)
+    assert r.ok and r.text == "xong" and "trống" in llm.seen[1][-1]["content"]
+
+
 async def test_identical_call_loop_detected(tmp_path):
     (tmp_path / "j").mkdir()
     llm = FakeLLM([call("list_dir", "{}", str(i)) for i in range(10)])

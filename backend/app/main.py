@@ -41,6 +41,8 @@ def _job(job_id: str) -> dict:
         raise HTTPException(404, "Không có job này")
 
 
+# Các endpoint hành động phải là `async def`: schedule() gọi asyncio.create_task, mà hàm `def` thường
+# bị FastAPI chạy ở thread không có event loop (lỗi này từng làm job đứng im sau khi bạn trả lời).
 def _act(job_id: str, fn, *args):
     """Chạy một hành động của chủ studio; sai trạng thái thì trả 409; xong thì cho job chạy tiếp ở nền."""
     _job(job_id)
@@ -89,27 +91,27 @@ def job_detail(job_id: str):
 
 
 @app.post("/jobs/{job_id}/answer")
-def answer(job_id: str, body: Text):
+async def answer(job_id: str, body: Text):
     return _act(job_id, orch.answer, body.text)
 
 
 @app.post("/jobs/{job_id}/brief/approve")
-def approve_brief(job_id: str):
+async def approve_brief(job_id: str):
     return _act(job_id, orch.approve_brief)
 
 
 @app.post("/jobs/{job_id}/brief/reject")
-def reject_brief(job_id: str, body: Text):
+async def reject_brief(job_id: str, body: Text):
     return _act(job_id, orch.reject_brief, body.text)
 
 
 @app.post("/jobs/{job_id}/handoff/approve")
-def approve_handoff(job_id: str):
+async def approve_handoff(job_id: str):
     return _act(job_id, orch.approve_handoff)
 
 
 @app.post("/jobs/{job_id}/handoff/reject")
-def reject_handoff(job_id: str, body: Text):
+async def reject_handoff(job_id: str, body: Text):
     return _act(job_id, orch.reject_handoff, body.text)
 
 
