@@ -64,6 +64,10 @@ def defaults() -> dict:
             "vision": chain(None, "vision", dm["vision"]),
         },
         "owner_approves_brief": False,       # False: Giám đốc tự chốt brief; chủ chỉ xem kết quả cuối
+        # Tự chạy: Giám đốc không hỏi lại (tự chọn mặc định), job bị chặn thì tự thử lại vài lần, tự chấp nhận bàn giao
+        # (chủ vẫn phản hồi được sau đó). Tắt đi thì mọi chỗ dừng đều chờ chủ như cũ.
+        "autopilot": True,
+        "autopilot_retries": 3,
         "sandbox_mode": config.SANDBOX_MODE,  # docker | local
         # Mức đầu tư mặc định của job mới: full = đúng model đã cấu hình; economy = hạ bậc Claude theo bảng `downgrade`.
         "default_tier": "full",
@@ -86,7 +90,7 @@ def load() -> dict:
     for role, lst in (user.get("roles") or {}).items():
         if role in ROLES and isinstance(lst, list) and lst:
             s["roles"][role] = lst
-    for k in ("owner_approves_brief", "sandbox_mode", "default_tier", "job_budget_usd"):
+    for k in ("owner_approves_brief", "autopilot", "autopilot_retries", "sandbox_mode", "default_tier", "job_budget_usd"):
         if k in user:
             s[k] = user[k]
     s["downgrade"].update(user.get("downgrade") or {})
@@ -128,12 +132,14 @@ def update(patch: dict) -> dict:
             if not clean:
                 raise ValueError(f"Vai {role} phải có ít nhất một model")
             user["roles"][role] = clean
-    for k in ("owner_approves_brief", "sandbox_mode", "default_tier", "job_budget_usd"):
+    for k in ("owner_approves_brief", "autopilot", "autopilot_retries", "sandbox_mode", "default_tier", "job_budget_usd"):
         if k in patch:
             if k == "sandbox_mode" and patch[k] not in ("docker", "local"):
                 raise ValueError("sandbox_mode phải là docker hoặc local")
             if k == "default_tier" and patch[k] not in TIERS:
                 raise ValueError("default_tier phải là full hoặc economy")
+            if k == "autopilot_retries" and (not isinstance(patch[k], int) or isinstance(patch[k], bool) or not 0 <= patch[k] <= 10):
+                raise ValueError("autopilot_retries phải là số nguyên 0-10")
             if k == "job_budget_usd" and (not isinstance(patch[k], (int, float)) or patch[k] < 0):
                 raise ValueError("job_budget_usd phải là số >= 0 (0 = không giới hạn)")
             user[k] = patch[k]

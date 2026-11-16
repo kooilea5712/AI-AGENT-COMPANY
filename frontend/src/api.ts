@@ -35,7 +35,7 @@ export type Cand = { connection: string; model: string };
 export type Settings = {
   connections: Record<string, Conn>; roles: Record<string, Cand[]>; roles_meta: Record<string, { label: string; hint: string }>;
   presets: { id: string; label: string; note: string; roles: Record<string, [string, string][]> }[];
-  owner_approves_brief: boolean; sandbox_mode: "docker" | "local"; data_file: string;
+  owner_approves_brief: boolean; autopilot: boolean; autopilot_retries: number; sandbox_mode: "docker" | "local"; data_file: string;
   default_tier: "full" | "economy"; job_budget_usd: number; downgrade: Record<string, string>; prices: Record<string, { in: number; out: number }>;
 };
 

@@ -57,6 +57,20 @@ def current_branch(path: Path) -> str:
     return git(path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
 
+def parse_path(raw: str) -> Path:
+    """Chuẩn hoá đường dẫn người dùng nhập: "Copy as path" của Windows bọc trong dấu ngoặc kép, và đường dẫn tương đối sẽ bị
+    hiểu theo thư mục chạy backend (sai hoàn toàn). Nên bỏ ngoặc/khoảng trắng thừa và BẮT BUỘC đường dẫn đầy đủ."""
+    t = (raw or "").strip().strip("\"'\u201c\u201d\u2018\u2019").strip()
+    if not t:
+        raise GitError("Chưa nhập đường dẫn thư mục.")
+    p = Path(os.path.expandvars(t)).expanduser()
+    if not p.is_absolute():
+        raise GitError(f"Cần đường dẫn đầy đủ (ví dụ D:\\Projects\\my-app), không phải '{t}'.")
+    if not p.is_dir():
+        raise GitError(f"Không tìm thấy thư mục: {p}")
+    return p
+
+
 def check_workspace_allowed(path: Path) -> None:
     """Chặn các thư mục không bao giờ nên giao cho agent sửa."""
     p = path.resolve()

@@ -90,8 +90,8 @@ async def create_job(description: str = Form(...), workspace: str = Form(""), ti
 @app.post("/workspace/check")
 async def workspace_check(path: str = Form(...)):
     """Giao diện hỏi trước: thư mục này có dùng được làm thư mục làm việc không (chưa tạo gì cả)."""
-    p = Path(path.strip()).expanduser()
     try:
+        p = gitops.parse_path(path)
         gitops.check_workspace_allowed(p)
         if gitops.is_repo(p):
             if gitops.toplevel(p) != p.resolve():
@@ -357,6 +357,8 @@ class SettingsPatch(BaseModel):
     connections: dict | None = None
     roles: dict | None = None
     owner_approves_brief: bool | None = None
+    autopilot: bool | None = None
+    autopilot_retries: int | None = None
     sandbox_mode: str | None = None
     default_tier: str | None = None
     job_budget_usd: float | None = None

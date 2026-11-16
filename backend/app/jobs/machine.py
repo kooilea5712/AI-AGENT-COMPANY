@@ -44,7 +44,7 @@ TRANSITIONS = {
     EXECUTING: {QA_DESIGN, BLOCKED},
     QA_DESIGN: {QA_RUN, BLOCKED},
     QA_RUN: {EXECUTING, QA_DESIGN, HANDOFF, BLOCKED},      # FAIL còn lượt sửa -> EXECUTING; testcase lỗi -> QA_DESIGN; hết lượt -> BLOCKED
-    HANDOFF: {AWAITING_HANDOFF, BLOCKED},
+    HANDOFF: {AWAITING_HANDOFF, LESSONS, BLOCKED},          # LESSONS: chế độ tự chạy tự chấp nhận bàn giao
     AWAITING_HANDOFF: {LESSONS, PLANNING},                 # chấp nhận / phản hồi (Giám đốc lập kế hoạch bổ sung)
     LESSONS: {DONE},
     DONE: {PLANNING},                                      # chủ nhắn thêm sau khi xong
@@ -63,6 +63,18 @@ class InvalidAction(Exception):
 def _short(t: str, n: int = 600) -> str:
     t = (t or "").strip()
     return t if len(t) <= n else t[:n] + "…"
+
+
+def _extract_brief(text: str) -> str | None:
+    """Lấy nội dung brief mà model dán thẳng vào câu trả lời: ưu tiên khối ```markdown```, sau đó là tiêu đề '# ... brief'."""
+    text = text or ""
+    for block in re.findall(r"```(?:markdown|md)?[^\n]*\n(.*?)```", text, re.S | re.I):
+        if re.search(r"^#{1,3}\s", block, re.M) and len(block.strip()) >= 80:
+            return block.strip() + "\n"
+    m = re.search(r"^#{1,2}\s*brief\b.*", text, re.M | re.S | re.I)
+    if m and len(m.group(0).strip()) >= 80:
+        return m.group(0).strip() + "\n"
+    return None
 
 
 class Orchestrator:
@@ -154,7 +166,7 @@ class Orchestrator:
         ws_note = None
         base = None
         if workspace and workspace.strip():
-            ws = Path(workspace.strip()).expanduser()
+            ws = gitops.parse_path(workspace)
             ws_note = gitops.prepare_workspace(ws, job_id)       # GitError nếu thư mục không hợp lệ: báo ngay lúc tạo job
             workspace, base = str(ws.resolve()), None
         else:
@@ -324,12 +336,48 @@ class Orchestrator:
     async def run(self, job_id: str):
         context.job_id_var.set(job_id)       # mọi lượt gọi model trong run() được tính cho job này, đúng mức đầu tư của job
         context.tier_var.set(self.get(job_id)["tier"])
-        try:
-            while (state := self.get(job_id)["state"]) in RUNNING:
-                await getattr(self, f"_do_{state}")(job_id)
-        except Exception as e:  # noqa: BLE001 - bất kỳ lỗi bất ngờ nào cũng phải dừng job và hiện lên giao diện
-            if self.get(job_id)["state"] in RUNNING:
-                self._block(job_id, f"lỗi bất ngờ: {type(e).__name__}: {e}")
+        while True:
+            try:
+                while (state := self.get(job_id)["state"]) in RUNNING:
+                    await getattr(self, f"_do_{state}")(job_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - bất kỳ lỗi bất ngờ nào cũng phải dừng job và hiện lên giao diện
+                if self.get(job_id)["state"] in RUNNING:
+                    self._block(job_id, f"lỗi bất ngờ: {type(e).__name__}: {e}")
+            if not await self._auto_retry(job_id):
+                return
+
+    # Lỗi mà tự thử lại cũng vô ích: chủ chủ động dừng, hoặc hết hạn mức chi phí (phải nâng hạn mức mới chạy tiếp).
+    _NO_AUTO_RETRY = ("Chủ studio đã dừng job", "hạn mức chi phí")
+
+    async def _auto_retry(self, job_id: str) -> bool:
+        """Chế độ tự chạy: job bị chặn thì tự 'Tiếp tục' từ bước đã dừng, tối đa N lần kể từ lần cuối chủ can thiệp.
+        Trả True nếu đã đưa job chạy lại."""
+        s = settings.load()
+        j = self.get(job_id)
+        if not s["autopilot"] or j["state"] != BLOCKED or any(x in (j["error"] or "") for x in self._NO_AUTO_RETRY):
+            return False
+        last_owner = self.db.one("SELECT MAX(ts) t FROM messages WHERE job_id=? AND sender='owner'", (job_id,))["t"] or 0
+        done = self.db.one("SELECT COUNT(*) n FROM events WHERE job_id=? AND kind='auto_retry' AND ts>?", (job_id, last_owner))["n"]
+        if done >= s["autopilot_retries"]:
+            self.event(job_id, "auto_retry_stop", f"Đã tự thử lại {done} lần vẫn bị chặn: dừng hẳn, chờ chủ studio.")
+            return False
+        n = done + 1
+        self.event(job_id, "auto_retry", f"Chế độ tự chạy: tự tiếp tục lần {n}/{s['autopilot_retries']} sau "
+                                         f"{config.AUTO_RETRY_DELAY * n:.0f}s. Lỗi trước: {_short(j['error'], 300)}")
+        await asyncio.sleep(config.AUTO_RETRY_DELAY * n)
+        j = self.get(job_id)
+        if j["state"] != BLOCKED:          # trong lúc chờ, chủ đã tự bấm Tiếp tục/nhắn: để luồng đó lo
+            return False
+        src = j["blocked_from"] or INTAKE
+        target = EXECUTING if src == QA_RUN else src
+        if src == QA_DESIGN:
+            (self.job_dir(job_id) / "qa" / "testcases.json").unlink(missing_ok=True)
+        fix = 0 if src in (QA_RUN, EXECUTING) else j["fix_round"]
+        self.set_state(job_id, target, error=None, fix_round=fix, note=f"HỆ THỐNG TỰ TIẾP TỤC (lần {n}) sau lỗi: {_short(j['error'], 400)}. "
+                                                         "Hãy tránh lặp lại đúng lỗi đó: đổi cách làm nếu cần.")
+        return True
 
     # --- agent --------------------------------------------------------------------
     def _vision_fn(self):
@@ -400,20 +448,32 @@ class Orchestrator:
         parts = [self._ctx(job_id)]
         if j["note"] and brief.exists():
             parts.append(f"Chủ studio TRẢ LẠI brief hiện có (@job/brief.md) với phản hồi: {j['note']}\nHãy sửa brief.md.")
-        if j["asked"] >= 1:
-            parts.append("Bạn đã hỏi một lượt rồi: KHÔNG hỏi thêm, tự chọn phương án mặc định và ghi giả định vào brief.")
+        no_ask = j["asked"] >= 1 or settings.load()["autopilot"]
+        if no_ask:
+            parts.append("KHÔNG hỏi lại chủ studio (" + ("đã hỏi một lượt rồi" if j["asked"] >= 1 else "chủ bật chế độ tự chạy, không có mặt để trả lời")
+                         + "): tự chọn phương án mặc định hợp lý nhất và ghi rõ giả định vào brief.")
         parts.append("Việc của bạn bây giờ: bước 1 (tiếp nhận). Hỏi lại nếu bắt buộc, hoặc viết @job/brief.md.")
-        r = await self._agent(job_id, staff.DIRECTOR, "director", self._director_sys(), "\n\n".join(parts))
-        # Model hay chèn một câu dẫn trước "CÂU HỎI:" nên tìm ở đầu dòng bất kỳ, không chỉ đầu văn bản.
-        q = re.search(r"^[\s*#]*CÂU HỎI.*", r.text, re.M | re.S)
-        if q and j["asked"] < 1:
-            self.say(job_id, "director", q.group(0).strip())
-            self.set_state(job_id, WAITING_ANSWER, questions=q.group(0).strip(), asked=j["asked"] + 1)
-        elif brief.exists() and (before is None or brief.stat().st_mtime > before):
-            self._commit(job_id, "brief")
-            self.set_state(job_id, BRIEF_REVIEW, note=None)
-        else:
-            self._block(job_id, r.reason or "Giám đốc không viết brief.md cũng không hỏi gì")
+        wrote = lambda: brief.exists() and (before is None or brief.stat().st_mtime > before)
+        for attempt in (1, 2):
+            r = await self._agent(job_id, staff.DIRECTOR, "director", self._director_sys(), "\n\n".join(parts))
+            # Model hay chèn một câu dẫn trước "CÂU HỎI:" nên tìm ở đầu dòng bất kỳ, không chỉ đầu văn bản.
+            q = re.search(r"^[\s*#]*CÂU HỎI.*", r.text, re.M | re.S)
+            if q and not no_ask:
+                self.say(job_id, "director", q.group(0).strip())
+                return self.set_state(job_id, WAITING_ANSWER, questions=q.group(0).strip(), asked=j["asked"] + 1)
+            if not wrote() and (salvaged := _extract_brief(r.text)):
+                # Model yếu (vd. model dự phòng) hay dán brief vào câu trả lời thay vì gọi write_file: lưu hộ.
+                brief.write_text(salvaged, encoding="utf-8")
+                self.event(job_id, "warn", "Giám đốc dán brief vào câu trả lời thay vì gọi write_file: hệ thống đã lưu hộ vào brief.md",
+                           staff.DIRECTOR)
+            if wrote():
+                self._commit(job_id, "brief")
+                return self.set_state(job_id, BRIEF_REVIEW, note=None)
+            if not r.ok:
+                break
+            parts.append("LẦN TRƯỚC bạn KHÔNG tạo file @job/brief.md (chỉ trả lời bằng chữ). Bắt buộc gọi công cụ write_file "
+                         "với path \"@job/brief.md\" và toàn bộ nội dung brief, rồi mới trả lời \"ĐÃ VIẾT BRIEF\".")
+        self._block(job_id, r.reason or "Giám đốc không viết brief.md cũng không hỏi gì (đã nhắc lại 1 lần)")
 
     # --- Bước 2: Giám đốc tự chốt duyệt brief ----------------------------------------
     async def _do_brief_review(self, job_id: str):
@@ -755,7 +815,12 @@ class Orchestrator:
         if target.exists() and (before is None or target.stat().st_mtime > before):
             self.say(job_id, "director", "Đã xong. " + _short(target.read_text(encoding="utf-8"), 700))
             self._commit(job_id, "handoff")
-            self.set_state(job_id, AWAITING_HANDOFF)
+            if settings.load()["autopilot"]:
+                self.say(job_id, "director", "Chế độ tự chạy: hệ thống tự chấp nhận kết quả. Anh/chị xem lại lúc nào cũng được, "
+                                             "nhắn phản hồi là tôi lập kế hoạch sửa tiếp.")
+                self.set_state(job_id, LESSONS)
+            else:
+                self.set_state(job_id, AWAITING_HANDOFF)
         else:
             self._block(job_id, r.reason or "Giám đốc không viết HANDOFF.md")
 

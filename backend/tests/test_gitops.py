@@ -62,3 +62,24 @@ def test_subfolder_of_bigger_repo_rejected(tmp_path):
 def test_dangerous_workspaces_refused(bad):
     with pytest.raises(GitError):
         gitops.check_workspace_allowed(bad)
+
+
+def test_parse_path_strips_quotes_from_windows_copy_as_path(tmp_path):
+    d = tmp_path / "VID COMMENT THREAD"
+    d.mkdir()
+    for raw in (f'"{d}"', f"'{d}'", f"  {d}  ", f"\u201c{d}\u201d"):
+        assert gitops.parse_path(raw) == d
+    with pytest.raises(GitError, match="đầy đủ"):
+        gitops.parse_path("relative\\folder")                 # không bao giờ hiểu theo thư mục của backend
+    with pytest.raises(GitError, match="Không tìm thấy"):
+        gitops.parse_path(str(tmp_path / "khong-co"))
+    with pytest.raises(GitError, match="Chưa nhập"):
+        gitops.parse_path('  ""  ')
+
+
+def test_any_project_folder_outside_the_studio_dir_is_allowed(tmp_path):
+    # Thư mục project ở bất kỳ đâu đều dùng được (khác ổ, khác thư mục dự án); chỉ thư mục hệ thống bị chặn.
+    other = tmp_path / "elsewhere" / "my-app"
+    other.mkdir(parents=True)
+    gitops.check_workspace_allowed(other)
+    assert "studio/job-9" in (gitops.prepare_workspace(other, "job-9") and gitops.current_branch(other))

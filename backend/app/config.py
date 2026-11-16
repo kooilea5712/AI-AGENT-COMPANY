@@ -32,6 +32,8 @@ DIRECT_MODELS = {
 
 MAX_STEPS_PER_TASK = int(os.getenv("MAX_STEPS_PER_TASK", "25"))
 MAX_FIX_ROUNDS = 2  # theo thiết kế: tối đa hai vòng sửa sau FAIL
+# Chế độ tự chạy: chờ bao lâu trước lần tự thử lại thứ n (giây = AUTO_RETRY_DELAY * n), để model/mạng kịp hồi.
+AUTO_RETRY_DELAY = float(os.getenv("AUTO_RETRY_DELAY", "20"))
 COMMAND_TIMEOUT = int(os.getenv("COMMAND_TIMEOUT", "60"))
 # Chạy lệnh của agent: docker (container cô lập, khuyên dùng) hoặc local (PowerShell + danh sách đen).
 SANDBOX_MODE = os.getenv("SANDBOX_MODE", "docker")

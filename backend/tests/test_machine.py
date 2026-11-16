@@ -119,6 +119,36 @@ async def test_director_self_review_can_rewrite_once(orch):
     assert o.get(jid)["round"] == 1
 
 
+BRIEF_TEXT = "# BRIEF: Tool\n\n## Mục tiêu\nLàm tool video dọc.\n\n## Tiêu chí nghiệm thu\n- Xuất được MP4 1080x1920 có thẻ."
+
+
+async def test_brief_pasted_in_reply_is_saved_instead_of_blocking(orch):
+    """Model yếu dán brief vào câu trả lời thay vì gọi write_file: hệ thống lưu hộ, job đi tiếp."""
+    llm = Script(director=[say(f"ĐÃ VIẾT BRIEF\n\n@job/brief.md\n```markdown\n{BRIEF_TEXT}\n```"), say("DUYỆT"),
+                           wf("@job/plan.json", PLAN1), say("ok")], engineer=eng_ok(), **qa())
+    o = orch(llm)
+    jid = o.create_job("x")
+    await o.run(jid)
+    assert (o.job_dir(jid) / "brief.md").read_text(encoding="utf-8").startswith("# BRIEF: Tool")
+    assert o.get(jid)["round"] == 1
+
+
+async def test_director_reminded_once_to_write_brief_then_blocks(orch):
+    llm = Script(director=[say("ĐÃ VIẾT BRIEF, @job/brief.md đã được tạo."), wf("@job/brief.md", BRIEF_TEXT), say("ĐÃ VIẾT BRIEF"),
+                           say("DUYỆT"), wf("@job/plan.json", PLAN1), say("ok")], engineer=eng_ok(), **qa())
+    o = orch(llm)
+    jid = o.create_job("x")
+    await o.run(jid)
+    assert "KHÔNG tạo file @job/brief.md" in [c for c in llm.calls if c[0] == "director"][1][1]
+    assert o.get(jid)["round"] == 1
+
+    llm2 = Script(director=[say("xong"), say("xong rồi")])
+    o2 = orch(llm2)
+    jid2 = o2.create_job("y")
+    await o2.run(jid2)
+    assert o2.get(jid2)["state"] == m.BLOCKED and "nhắc lại" in o2.get(jid2)["error"]
+
+
 async def test_director_question_then_answer_with_attachment(orch):
     llm = Script(director=[say("Cần làm rõ.\n\nCÂU HỎI:\n1. Định dạng? (mặc định JPG)"), wf("@job/brief.md", "b"), say("ok"), say("DUYỆT"),
                            wf("@job/plan.json", PLAN1), say("ok")], engineer=eng_ok(), **qa())
@@ -394,3 +424,45 @@ async def test_owner_can_cancel_a_running_job_and_resume_it(orch):
         o.cancel(jid)                                                   # đã dừng rồi
     o.retry(jid, "tiếp đi")                                             # và tiếp tục được
     assert o.get(jid)["state"] == m.INTAKE
+
+
+async def test_autopilot_never_asks_and_accepts_handoff(orch):
+    settings.update({"autopilot": True})
+    llm = Script(director=[say("CÂU HỎI:\n1. Định dạng?"), wf("@job/brief.md", BRIEF_TEXT), say("ĐÃ VIẾT BRIEF"), say("DUYỆT"),
+                           wf("@job/plan.json", PLAN1), say("ok"), wf("@job/deliverables/HANDOFF.md", "# giao"), say("ok"), say("- bài học")],
+                 engineer=eng_ok(), **qa())
+    o = orch(llm)
+    jid = o.create_job("việc mơ hồ")
+    await o.run(jid)
+    assert "KHÔNG hỏi lại chủ studio" in [c for c in llm.calls if c[0] == "director"][0][1]
+    assert o.get(jid)["state"] == m.DONE                      # không dừng ở câu hỏi, không chờ duyệt bàn giao
+    o.feedback(jid, "sửa thêm chút")                         # chủ vẫn phản hồi được sau khi tự chấp nhận
+    assert o.get(jid)["state"] == m.PLANNING
+
+
+async def test_autopilot_retries_blocked_job_then_gives_up(orch):
+    settings.update({"autopilot": True, "autopilot_retries": 2})
+    # Lần đầu + 2 lần tự thử lại, lượt nào cũng không viết brief (mỗi lượt = 2 lần gọi vì có nhắc lại) -> dừng hẳn.
+    o = orch(Script(director=[say("xong")] * 6))
+    jid = o.create_job("x")
+    await o.run(jid)
+    assert o.get(jid)["state"] == m.BLOCKED
+    kinds = [e["kind"] for e in o.db.query("SELECT kind FROM events WHERE job_id=?", (jid,))]
+    assert kinds.count("auto_retry") == 2 and "auto_retry_stop" in kinds
+
+    # Tự thử lại thành công: job đi tiếp tới cuối, không cần chủ.
+    llm = Script(director=[say("xong"), say("xong"), wf("@job/brief.md", BRIEF_TEXT), say("ĐÃ VIẾT BRIEF"), say("DUYỆT"),
+                           wf("@job/plan.json", PLAN1), say("ok"), wf("@job/deliverables/HANDOFF.md", "# giao"), say("ok"), say("- b")],
+                 engineer=eng_ok(), **qa())
+    o2 = orch(llm)
+    jid2 = o2.create_job("y")
+    await o2.run(jid2)
+    assert o2.get(jid2)["state"] == m.DONE
+
+
+async def test_autopilot_does_not_retry_owner_cancel(orch):
+    settings.update({"autopilot": True})
+    o = orch(Script())
+    jid = o.create_job("x")
+    o.set_state(jid, m.BLOCKED, error="Chủ studio đã dừng job", blocked_from=m.INTAKE)
+    assert await o._auto_retry(jid) is False

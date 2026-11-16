@@ -10,6 +10,8 @@ export default function SettingsPage() {
   const [clear, setClear] = useState<Record<string, boolean>>({});
   const [conn, setConn] = useState<Record<string, { base_url: string; enabled: boolean }>>({});
   const [ownerBrief, setOwnerBrief] = useState(false);
+  const [autopilot, setAutopilot] = useState(true);
+  const [retries, setRetries] = useState("3");
   const [sandbox, setSandbox] = useState<"docker" | "local">("docker");
   const [tier, setTier] = useState<"full" | "economy">("full");
   const [budget, setBudget] = useState("0");
@@ -22,7 +24,7 @@ export default function SettingsPage() {
   const adopt = (x: S) => {
     setS(x); setRoles(JSON.parse(JSON.stringify(x.roles)));
     setConn(Object.fromEntries(Object.entries(x.connections).map(([k, c]) => [k, { base_url: c.base_url, enabled: c.enabled }])));
-    setOwnerBrief(x.owner_approves_brief); setSandbox(x.sandbox_mode); setKeys({}); setClear({});
+    setOwnerBrief(x.owner_approves_brief); setAutopilot(x.autopilot ?? true); setRetries(String(x.autopilot_retries ?? 3)); setSandbox(x.sandbox_mode); setKeys({}); setClear({});
     setTier(x.default_tier); setBudget(String(x.job_budget_usd ?? 0));
     setPrices(Object.entries(x.prices ?? {}).map(([model, p]) => ({ model, in: String(p.in), out: String(p.out) })));
     setDown(Object.entries(x.downgrade ?? {}).map(([from, to]) => ({ from, to })));
@@ -42,7 +44,7 @@ export default function SettingsPage() {
     for (const r of prices) if (r.model.trim()) pr[r.model.trim()] = { in: Number(r.in), out: Number(r.out) };
     const dg: Record<string, string> = {};
     for (const r of down) if (r.from.trim() && r.to.trim()) dg[r.from.trim()] = r.to.trim();
-    try { adopt(await api.saveSettings({ connections, roles, owner_approves_brief: ownerBrief, sandbox_mode: sandbox, default_tier: tier, job_budget_usd: Number(budget) || 0, prices: pr, downgrade: dg })); setMsg("Đã lưu."); }
+    try { adopt(await api.saveSettings({ connections, roles, owner_approves_brief: ownerBrief, autopilot, autopilot_retries: Math.min(10, Math.max(0, Math.round(Number(retries) || 0))), sandbox_mode: sandbox, default_tier: tier, job_budget_usd: Number(budget) || 0, prices: pr, downgrade: dg })); setMsg("Đã lưu."); }
     catch (e) { setMsg("Lỗi: " + String(e)); }
   };
   const addConn = async () => {
@@ -162,6 +164,11 @@ export default function SettingsPage() {
 
       <div className="card">
         <h3>Luồng và an toàn</h3>
+        <label className="row"><input type="checkbox" checked={autopilot} onChange={(e) => setAutopilot(e.target.checked)} />
+          <span>Chế độ tự chạy <span className="muted small">(khuyên bật khi bạn không ngồi canh: Giám đốc không hỏi lại mà tự chọn mặc định, job bị chặn thì tự thử lại, kết quả cuối tự được chấp nhận; bạn vẫn nhắn phản hồi để sửa tiếp bất cứ lúc nào)</span></span></label>
+        {autopilot && <div className="row"><span>Số lần tự thử lại khi bị chặn:</span>
+          <input type="number" min={0} max={10} value={retries} onChange={(e) => setRetries(e.target.value)} style={{ width: 70 }} />
+          <span className="muted small">hết số lần này mà vẫn lỗi thì job mới dừng chờ bạn</span></div>}
         <label className="row"><input type="checkbox" checked={ownerBrief} onChange={(e) => setOwnerBrief(e.target.checked)} />
           <span>Tôi muốn tự duyệt brief <span className="muted small">(mặc định tắt: Giám đốc tự chốt brief, bạn chỉ xem kết quả cuối)</span></span></label>
         <div className="row"><span>Chạy lệnh của agent:</span>
