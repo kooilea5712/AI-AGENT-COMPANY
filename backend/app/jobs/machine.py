@@ -585,13 +585,19 @@ class Orchestrator:
         rnd = j["round"]
         plan = self._plan(job_id)
         if j["fix_round"] > 0:
-            fid = f"FIX{j['fix_round']}"
-            if not self.db.one("SELECT 1 FROM tasks WHERE job_id=? AND round=? AND task_id=?", (job_id, rnd, fid)):
+            # Mỗi lượt sửa là một task FIX MỚI (FIX1, FIX2, FIX3...), không phụ thuộc fix_round: fix_round bị reset khi chủ bấm
+            # "Tiếp tục" nên nếu đặt tên theo fix_round thì FIX1/FIX2 cũ (đã xong) bị coi là đã làm và Kỹ sư không bao giờ được gọi lại.
+            # Task FIX gần nhất chưa xong (bị ngắt/hỏng) thì chạy lại chính nó.
+            last_fix = self.db.one("SELECT * FROM tasks WHERE job_id=? AND round=? AND task_id LIKE 'FIX%' ORDER BY id DESC LIMIT 1", (job_id, rnd))
+            if last_fix and last_fix["status"] != "done":
+                todo = [last_fix]
+            else:
+                n = self.db.one("SELECT COUNT(*) n FROM tasks WHERE job_id=? AND round=? AND task_id LIKE 'FIX%'", (job_id, rnd))["n"] + 1
                 last = self.db.one("SELECT role FROM tasks WHERE job_id=? AND round=? AND task_id NOT LIKE 'FIX%' ORDER BY id DESC LIMIT 1", (job_id, rnd))
                 role = last["role"] if last else "software"
                 self.db.execute("INSERT INTO tasks(job_id, round, task_id, role, title, depends) VALUES (?,?,?,?,?,?)",
-                                (job_id, rnd, fid, role, f"Sửa lỗi Kiểm thử (vòng {j['fix_round']})", "[]"))
-            todo = self.db.query("SELECT * FROM tasks WHERE job_id=? AND round=? AND task_id=? AND status!='done'", (job_id, rnd, fid))
+                                (job_id, rnd, f"FIX{n}", role, f"Sửa lỗi Kiểm thử (lượt {n}, vòng {j['fix_round']})", "[]"))
+                todo = self.db.query("SELECT * FROM tasks WHERE job_id=? AND round=? AND task_id=?", (job_id, rnd, f"FIX{n}"))
         else:
             todo = self.db.query("SELECT * FROM tasks WHERE job_id=? AND round=? AND task_id NOT LIKE 'FIX%' AND status!='done' ORDER BY id", (job_id, rnd))
         by_id = {str(t["id"]): t for t in plan["tasks"]}
