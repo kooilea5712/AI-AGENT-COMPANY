@@ -19,6 +19,8 @@ db = DB(config.DB_PATH)
 orch = machine.Orchestrator(db, LLMClient())
 config.JOBS_DIR.mkdir(parents=True, exist_ok=True)
 settings.apply_runtime()
+LLMClient.budget_guard = orch.check_budget
+LLMClient.usage_sink = orch.on_usage
 
 
 @asynccontextmanager
@@ -67,13 +69,20 @@ async def get_health(deep: bool = False):
 
 # ---------------- job ----------------
 @app.post("/jobs")
-async def create_job(description: str = Form(...), workspace: str = Form(""), files: list[UploadFile] = File(default=[])):
+async def create_job(description: str = Form(...), workspace: str = Form(""), tier: str = Form(""), budget: str = Form(""),
+                     files: list[UploadFile] = File(default=[])):
     if not description.strip():
         raise HTTPException(422, "Mô tả trống")
     try:
-        job_id = orch.create_job(description, await _upload(files), workspace or None)
+        usd = float(budget) if budget.strip() else None
+    except ValueError:
+        raise HTTPException(422, "Hạn mức phải là số (USD)")
+    try:
+        job_id = orch.create_job(description, await _upload(files), workspace or None, tier or None, usd)
     except gitops.GitError as e:
         raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     orch.schedule(job_id)
     return {"id": job_id}
 
@@ -117,7 +126,27 @@ def job_detail(job_id: str):
             "handoff": _read(job_id, "deliverables/HANDOFF.md"),
             "qa_reports": [{"name": p.name, "text": p.read_text(encoding="utf-8")} for p in qa],
             "testcases": cases,
-            "owner_approves_brief": settings.load()["owner_approves_brief"]}
+            "owner_approves_brief": settings.load()["owner_approves_brief"], "usage": orch.job_cost(job_id)}
+
+
+@app.get("/jobs/{job_id}/usage")
+def job_usage(job_id: str):
+    _job(job_id)
+    return orch.job_cost(job_id)
+
+
+class BudgetBody(BaseModel):
+    usd: float | None = None     # None = dùng hạn mức mặc định trong Cài đặt; 0 = không giới hạn
+
+
+@app.put("/jobs/{job_id}/budget")
+def put_budget(job_id: str, body: BudgetBody):
+    _job(job_id)
+    try:
+        orch.set_budget(job_id, body.usd)
+    except machine.InvalidAction as e:
+        raise HTTPException(422, str(e))
+    return orch.job_cost(job_id)
 
 
 @app.post("/jobs/{job_id}/answer")
@@ -329,6 +358,10 @@ class SettingsPatch(BaseModel):
     roles: dict | None = None
     owner_approves_brief: bool | None = None
     sandbox_mode: str | None = None
+    default_tier: str | None = None
+    job_budget_usd: float | None = None
+    downgrade: dict | None = None
+    prices: dict | None = None
 
 
 # Bộ cấu hình dựng sẵn cho các tình huống hay gặp: có Claude API, laptop không có Ollama, chỉ chạy máy.

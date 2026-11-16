@@ -56,6 +56,15 @@ Mỗi vai có **danh sách ứng viên** theo thứ tự ưu tiên; lỗi (mạn
 - Thêm nhà cung cấp OpenAI-compatible khác (OpenRouter, LM Studio...) ngay trong Cài đặt. Nút "Thử" gọi thật từng vai và cho biết ứng viên nào đã phục vụ.
 - OmniRoute: mặc định cắt yêu cầu sau 15 giây (lỗi 504) và giá trị toàn cục không chỉnh được. Chỉnh thật: dashboard > Providers > Ollama > sửa kết nối `ollama-local` > **Max Queue Wait (ms)** = 120000.
 
+## Mức đầu tư và chi phí
+
+- **Mức đầu tư theo job** (chọn khi tạo job; mặc định đặt ở Cài đặt): **Quan trọng** dùng đúng model đã cấu hình (Giám đốc = Opus). **Tiết kiệm** hạ mọi model Claude một bậc theo
+  bảng hạ bậc (Opus → Sonnet, Sonnet → Haiku; sửa được ở Cài đặt); model chạy trên máy và OmniRoute giữ nguyên. Như vậy chỉ job quan trọng mới tốn Opus.
+- **Đếm chi phí:** mọi lượt gọi model được ghi token và tiền ước tính cho đúng job. Chip 💰 trên đầu job hiện `$đã dùng / $hạn mức · token`; rê chuột xem theo từng model, bấm để đổi hạn mức.
+- **Đơn giá do bạn nhập** (Cài đặt, USD cho 1 triệu token, theo bảng giá hiện hành của nhà cung cấp). App KHÔNG kèm sẵn số liệu giá. Model trả phí chưa có đơn giá thì vẫn đếm token nhưng tiền hiện 0 kèm dấu ⚠; model local/OmniRoute tính 0.
+- **Hạn mức mỗi job** (mặc định ở Cài đặt, đặt riêng được khi tạo hoặc sau đó; 0 = không giới hạn): báo ở 80%; chạm hạn mức thì job dừng TRƯỚC lượt gọi tiếp theo (không đốt thêm tiền); nút "Nâng hạn mức và tiếp tục" trên thẻ job.
+- Số tiền chỉ là ước tính từ token mà nhà cung cấp trả về; số thật nằm ở Anthropic Console.
+
 ## Làm trực tiếp trên máy + Git
 
 Khi tạo job, ô **"Làm trực tiếp trên một thư mục trong máy"** gắn job với một project:

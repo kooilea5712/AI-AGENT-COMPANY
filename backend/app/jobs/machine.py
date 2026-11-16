@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .. import config, gitops, planning, prompts, settings, staff
+from .. import config, context, gitops, planning, prompts, settings, staff
 from ..agents.loop import run_agent
 from ..db import DB
 from ..tools.sandbox import JobTools, ToolError, run_in_sandbox
@@ -142,7 +142,13 @@ class Orchestrator:
         return n
 
     # --- tạo job ------------------------------------------------------------
-    def create_job(self, description: str, files: list[tuple[str, bytes]] | None = None, workspace: str | None = None) -> str:
+    def create_job(self, description: str, files: list[tuple[str, bytes]] | None = None, workspace: str | None = None,
+                   tier: str | None = None, budget: float | None = None) -> str:
+        tier = tier or settings.load()["default_tier"]
+        if tier not in settings.TIERS:
+            raise ValueError("tier phải là full hoặc economy")
+        if budget is not None and budget < 0:
+            raise ValueError("hạn mức phải >= 0")
         job_id = f"job-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:3]}"
         d = self.job_dir(job_id)
         ws_note = None
@@ -160,8 +166,8 @@ class Orchestrator:
             (d / "inputs" / Path(name).name).write_bytes(data)
         title = description.strip().splitlines()[0][:80] or job_id
         now = time.time()
-        self.db.execute("INSERT INTO jobs(id,title,description,state,created_at,updated_at,workspace,base_branch) VALUES (?,?,?,?,?,?,?,?)",
-                        (job_id, title, description, INTAKE, now, now, workspace, base))
+        self.db.execute("INSERT INTO jobs(id,title,description,state,created_at,updated_at,workspace,base_branch,tier,budget) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (job_id, title, description, INTAKE, now, now, workspace, base, tier, budget))
         self.say(job_id, "owner", description, [f"inputs/{Path(n).name}" for n, _ in files or []])
         self.event(job_id, "state", f"tạo job, trạng thái {INTAKE}", staff.OWNER)
         if ws_note:
@@ -269,7 +275,55 @@ class Orchestrator:
                 self.event(j["id"], "resume", f"backend khởi động lại giữa chừng, chạy lại bước '{j['state']}'")
                 self.schedule(j["id"])
 
+    # --- chi phí và hạn mức ------------------------------------------------------------
+    def job_cost(self, job_id: str) -> dict:
+        r = self.db.one("SELECT COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost),0) cost, "
+                        "COALESCE(SUM(1-priced),0) unpriced, COUNT(*) calls FROM usage WHERE job_id=?", (job_id,))
+        j = self.get(job_id)
+        budget = j["budget"] if j["budget"] is not None else settings.load()["job_budget_usd"]
+        return {"tokens_in": r["tin"], "tokens_out": r["tout"], "cost": round(r["cost"], 6), "calls": r["calls"],
+                "unpriced_calls": r["unpriced"], "budget": budget or 0, "tier": j["tier"],
+                "by_model": self.db.query("SELECT model, connection, SUM(tokens_in) tokens_in, SUM(tokens_out) tokens_out, SUM(cost) cost, "
+                                          "MIN(priced) priced, COUNT(*) calls FROM usage WHERE job_id=? GROUP BY model, connection ORDER BY cost DESC", (job_id,))}
+
+    def on_usage(self, role: str, connection: str, model: str, usage: dict):
+        """Móc của LLMClient: ghi token + chi phí ước tính cho job hiện tại (lấy từ context)."""
+        job_id = context.job_id_var.get()
+        if not job_id:
+            return
+        s = settings.load()
+        c = s["connections"].get(connection, {})
+        tin, tout = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        local = settings._local(c.get("base_url", ""))        # Ollama và OmniRoute chạy trên máy: không tính tiền ở đây
+        price = None if local else s["prices"].get(model)
+        cost = (tin * price["in"] + tout * price["out"]) / 1_000_000 if price else 0.0
+        self.db.execute("INSERT INTO usage(job_id, ts, role, connection, model, tokens_in, tokens_out, cost, priced) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (job_id, time.time(), role, connection, model, tin, tout, cost, 1 if (local or price) else 0))
+        info = self.job_cost(job_id)
+        if info["budget"] and info["cost"] >= 0.8 * info["budget"] and not self.db.one(
+                "SELECT 1 FROM events WHERE job_id=? AND kind='cost'", (job_id,)):
+            self.event(job_id, "cost", f"Đã dùng 80% hạn mức chi phí: ${info['cost']:.2f} / ${info['budget']:.2f}", staff.SYSTEM)
+
+    def check_budget(self, job_id: str | None):
+        """Móc của LLMClient: chạm hạn mức thì dừng TRƯỚC lượt gọi tiếp theo."""
+        if not job_id:
+            return
+        info = self.job_cost(job_id)
+        if info["budget"] and info["cost"] >= info["budget"]:
+            from ..llm.client import BudgetExceeded
+            raise BudgetExceeded(f"Đã chạm hạn mức chi phí của job: ${info['cost']:.2f} / ${info['budget']:.2f}. "
+                                 "Nâng hạn mức (nút 💰 trên đầu job) rồi bấm Tiếp tục.")
+
+    def set_budget(self, job_id: str, usd: float | None):
+        if usd is not None and usd < 0:
+            raise InvalidAction("Hạn mức phải >= 0 (0 = không giới hạn)")
+        self.get(job_id)
+        self.db.execute("UPDATE jobs SET budget=?, updated_at=? WHERE id=?", (usd, time.time(), job_id))
+        self.event(job_id, "cost", "Hạn mức chi phí đặt thành " + ("mặc định" if usd is None else f"${usd:.2f}" if usd else "không giới hạn"), staff.OWNER)
+
     async def run(self, job_id: str):
+        context.job_id_var.set(job_id)       # mọi lượt gọi model trong run() được tính cho job này, đúng mức đầu tư của job
+        context.tier_var.set(self.get(job_id)["tier"])
         try:
             while (state := self.get(job_id)["state"]) in RUNNING:
                 await getattr(self, f"_do_{state}")(job_id)

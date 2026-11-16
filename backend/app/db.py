@@ -50,11 +50,20 @@ CREATE TABLE IF NOT EXISTS commits (
   hash TEXT NOT NULL, message TEXT NOT NULL, files INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS commits_job ON commits(job_id, id);
+-- Mỗi lượt gọi model: token và chi phí ước tính (chỉ tính khi có đơn giá; model local/OmniRoute tính 0).
+CREATE TABLE IF NOT EXISTS usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL, ts REAL NOT NULL, role TEXT NOT NULL, connection TEXT NOT NULL, model TEXT NOT NULL,
+  tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0, priced INTEGER NOT NULL DEFAULT 1   -- priced=0: model trả phí nhưng chưa có đơn giá nên chưa tính tiền
+);
+CREATE INDEX IF NOT EXISTS usage_job ON usage(job_id, id);
 """
 
 # Cột thêm sau này: DB tạo từ bản trước được nâng cấp tại chỗ.
 MIGRATIONS = {
-    "jobs": {"blocked_from": "TEXT", "workspace": "TEXT", "base_branch": "TEXT", "round": "INTEGER NOT NULL DEFAULT 0", "qa_repairs": "INTEGER NOT NULL DEFAULT 0"},
+    "jobs": {"blocked_from": "TEXT", "workspace": "TEXT", "base_branch": "TEXT", "round": "INTEGER NOT NULL DEFAULT 0", "qa_repairs": "INTEGER NOT NULL DEFAULT 0",
+             "tier": "TEXT NOT NULL DEFAULT 'full'", "budget": "REAL"},
     "events": {"actor": "TEXT"},
 }
 

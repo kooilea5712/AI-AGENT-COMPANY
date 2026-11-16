@@ -128,6 +128,9 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: s
   const [desc, setDesc] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [ws, setWs] = useState("");
+  const [tier, setTier] = useState<"full" | "economy">("full");
+  const [budget, setBudget] = useState("");
+  useEffect(() => { api.settings().then((s) => setTier(s.default_tier)).catch(() => {}); }, []);
   const [wsCheck, setWsCheck] = useState<{ ok: boolean; note?: string; error?: string } | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -136,7 +139,7 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: s
     setBusy(true); setErr("");
     try {
       try { if (Notification.permission === "default") Notification.requestPermission(); } catch { /* không bắt buộc */ }
-      onCreated((await api.create(desc, files, ws.trim())).id);
+      onCreated((await api.create(desc, files, ws.trim(), tier, budget.trim())).id);
     } catch (e) { setErr(String(e)); setBusy(false); }
   };
   return (
@@ -147,6 +150,15 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: s
         <textarea autoFocus rows={7} placeholder="Ví dụ: Viết script Python đổi tên ảnh theo ngày chụp, có chế độ chạy thử…" value={desc} onChange={(e) => setDesc(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && desc.trim()) submit(); }} />
         <Attach files={files} setFiles={setFiles} />
+        <div className="row tierrow">
+          <label className="grow"><span className="muted small">Mức đầu tư</span>
+            <select value={tier} onChange={(e) => setTier(e.target.value as "full" | "economy")}>
+              <option value="full">Quan trọng: dùng model mạnh nhất (Giám đốc = Opus)</option>
+              <option value="economy">Tiết kiệm: hạ một bậc (Opus → Sonnet, Sonnet → Haiku)</option>
+            </select></label>
+          <label><span className="muted small">Hạn mức USD (trống = mặc định)</span>
+            <input type="number" min="0" step="0.5" placeholder="vd. 2" value={budget} onChange={(e) => setBudget(e.target.value)} /></label>
+        </div>
         <details open={!!ws}><summary>📁 Làm trực tiếp trên một thư mục trong máy (không bắt buộc)</summary>
           <p className="muted small">Agent sửa thẳng project của bạn, trên nhánh Git riêng <code>studio/&lt;mã-job&gt;</code> và commit sau mỗi lần chạy; hệ thống không push và không đụng nhánh khác. Thư mục phải sạch (không có thay đổi chưa commit).</p>
           <div className="row"><input className="grow" placeholder="Ví dụ: D:\Projects\my-app" value={ws} onChange={(e) => { setWs(e.target.value); setWsCheck(null); }} />

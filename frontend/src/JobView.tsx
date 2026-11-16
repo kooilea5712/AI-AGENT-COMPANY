@@ -43,6 +43,7 @@ export default function JobView({ id, staff }: { id: string; staff: Person[] }) 
         {job.round > 1 && <span className="badge">đợt {job.round}</span>}
         {job.fix_round > 0 && <span className="badge">vòng sửa {job.fix_round}/2</span>}
         {job.workspace && <span className="badge" title={job.workspace}>📁 project trên máy</span>}
+        <CostChip job={job} reload={load} setErr={setErr} />
         {RUNNING.has(s) && s !== "lessons" && (
           <button className="small-btn danger" onClick={() => { if (confirm("Dừng job này? Mọi thứ đã làm được giữ lại; bạn có thể bấm Tiếp tục sau.")) api.cancel(id).then(load).catch((e) => setErr(String(e))); }}>⏹ Dừng job</button>
         )}
@@ -59,6 +60,28 @@ export default function JobView({ id, staff }: { id: string; staff: Person[] }) 
       {tab === "files" && <Files id={id} files={files} />}
       {tab === "git" && <GitTab id={id} job={job} />}
     </div>
+  );
+}
+
+const usd = (x: number) => "$" + (x < 0.01 && x > 0 ? x.toFixed(4) : x.toFixed(2));
+
+/** Chip chi phí: tiền ước tính / hạn mức + token. Bấm để đổi hạn mức của job. Rê chuột xem chi tiết theo model. */
+function CostChip({ job, reload, setErr }: { job: Job; reload: () => void; setErr: (s: string) => void }) {
+  const u = job.usage;
+  if (!u) return null;
+  const pct = u.budget ? u.cost / u.budget : 0;
+  const tip = [`Mức đầu tư: ${u.tier === "economy" ? "tiết kiệm" : "quan trọng"}`, `${u.calls} lượt gọi model`,
+    ...u.by_model.map((m) => `${m.connection}/${m.model}: ${m.tokens_in + m.tokens_out} token, ${m.priced ? usd(m.cost) : "chưa có đơn giá"}`),
+    u.unpriced_calls ? "Có lượt dùng model trả phí chưa có đơn giá: tiền thật có thể cao hơn số hiển thị. Nhập đơn giá ở Cài đặt." : "Chi phí là ước tính theo đơn giá bạn nhập."].join("\n");
+  const change = () => {
+    const v = prompt("Hạn mức chi phí cho job này (USD). 0 = không giới hạn; để trống = dùng mặc định trong Cài đặt.", u.budget ? String(u.budget) : "");
+    if (v === null) return;
+    api.setBudget(job.id, v.trim() === "" ? null : Number(v)).then(reload).catch((e) => setErr(String(e)));
+  };
+  return (
+    <button className={"badge cost" + (pct >= 1 ? " bad" : pct >= 0.8 ? " warn" : "")} title={tip} onClick={change}>
+      {u.tier === "economy" ? "🌱 " : "⭐ "}💰 {usd(u.cost)}{u.budget ? ` / ${usd(u.budget)}` : ""} · {Math.round((u.tokens_in + u.tokens_out) / 1000)}k token{u.unpriced_calls ? " ⚠" : ""}
+    </button>
   );
 }
 
@@ -119,6 +142,12 @@ function NeedsYou({ job, reload, setErr }: { job: Job; reload: () => void; setEr
   if (s === "blocked") return (
     <div className="card bad">
       <h3>Job đã dừng</h3><p>{job.error}</p>
+      {(job.error ?? "").includes("hạn mức chi phí") && (
+        <div className="row"><span>Nâng hạn mức lên (USD):</span>
+          <input type="number" min="0" step="0.5" style={{ width: 110 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={String((job.usage?.budget || 1) * 2)} />
+          <button className="primary" disabled={!text.trim()} onClick={act(async () => { await api.setBudget(job.id, Number(text)); await api.retry(job.id, "", []); })}>Nâng hạn mức và tiếp tục</button>
+        </div>
+      )}
       {box("Hướng dẫn thêm cho Giám đốc (không bắt buộc)…")}
       <div className="row"><button className="primary" onClick={act(() => api.retry(job.id, text, files))}>Tiếp tục từ bước đã dừng</button></div>
     </div>

@@ -11,6 +11,10 @@ export default function SettingsPage() {
   const [conn, setConn] = useState<Record<string, { base_url: string; enabled: boolean }>>({});
   const [ownerBrief, setOwnerBrief] = useState(false);
   const [sandbox, setSandbox] = useState<"docker" | "local">("docker");
+  const [tier, setTier] = useState<"full" | "economy">("full");
+  const [budget, setBudget] = useState("0");
+  const [prices, setPrices] = useState<{ model: string; in: string; out: string }[]>([]);
+  const [down, setDown] = useState<{ from: string; to: string }[]>([]);
   const [tests, setTests] = useState<Record<string, TestRes | "...">>({});
   const [msg, setMsg] = useState("");
   const [newConn, setNewConn] = useState({ name: "", label: "", base_url: "" });
@@ -19,6 +23,9 @@ export default function SettingsPage() {
     setS(x); setRoles(JSON.parse(JSON.stringify(x.roles)));
     setConn(Object.fromEntries(Object.entries(x.connections).map(([k, c]) => [k, { base_url: c.base_url, enabled: c.enabled }])));
     setOwnerBrief(x.owner_approves_brief); setSandbox(x.sandbox_mode); setKeys({}); setClear({});
+    setTier(x.default_tier); setBudget(String(x.job_budget_usd ?? 0));
+    setPrices(Object.entries(x.prices ?? {}).map(([model, p]) => ({ model, in: String(p.in), out: String(p.out) })));
+    setDown(Object.entries(x.downgrade ?? {}).map(([from, to]) => ({ from, to })));
   };
   useEffect(() => { api.settings().then(adopt).catch((e) => setMsg(String(e))); }, []);
   if (!s) return <p className="muted pad">{msg || "Đang tải…"}</p>;
@@ -31,7 +38,11 @@ export default function SettingsPage() {
       if (clear[k]) c.api_key = "__clear__"; else if (keys[k]?.trim()) c.api_key = keys[k].trim();
       connections[k] = c;
     }
-    try { adopt(await api.saveSettings({ connections, roles, owner_approves_brief: ownerBrief, sandbox_mode: sandbox })); setMsg("Đã lưu."); }
+    const pr: Record<string, { in: number; out: number }> = {};
+    for (const r of prices) if (r.model.trim()) pr[r.model.trim()] = { in: Number(r.in), out: Number(r.out) };
+    const dg: Record<string, string> = {};
+    for (const r of down) if (r.from.trim() && r.to.trim()) dg[r.from.trim()] = r.to.trim();
+    try { adopt(await api.saveSettings({ connections, roles, owner_approves_brief: ownerBrief, sandbox_mode: sandbox, default_tier: tier, job_budget_usd: Number(budget) || 0, prices: pr, downgrade: dg })); setMsg("Đã lưu."); }
     catch (e) { setMsg("Lỗi: " + String(e)); }
   };
   const addConn = async () => {
@@ -121,6 +132,32 @@ export default function SettingsPage() {
             ); })()}
           </div>
         ))}
+      </div>
+
+      <div className="card">
+        <h3>Chi phí và mức đầu tư</h3>
+        <p className="muted small">Mỗi job chọn mức đầu tư khi tạo. <b>Quan trọng</b> dùng đúng model đã cấu hình (Giám đốc = Opus). <b>Tiết kiệm</b> hạ mọi model Claude một bậc theo bảng dưới (Opus → Sonnet, Sonnet → Haiku); model chạy trên máy giữ nguyên.</p>
+        <div className="row"><span>Mức mặc định cho job mới:</span>
+          <select value={tier} onChange={(e) => setTier(e.target.value as "full" | "economy")}><option value="full">Quan trọng</option><option value="economy">Tiết kiệm</option></select></div>
+        <div className="row"><span>Hạn mức chi phí mỗi job (USD, 0 = không giới hạn):</span>
+          <input type="number" min="0" step="0.5" style={{ width: 110 }} value={budget} onChange={(e) => setBudget(e.target.value)} /></div>
+        <p className="muted small">Chạm hạn mức thì job dừng TRƯỚC lượt gọi tiếp theo (báo ở 80%); bạn nâng hạn mức rồi bấm Tiếp tục. Chỉ tính được tiền cho model có đơn giá bên dưới; model chạy trên máy và OmniRoute tính 0.</p>
+        <b className="small">Bảng hạ bậc</b>
+        {down.map((r, i) => (
+          <div key={i} className="row"><input className="grow" value={r.from} onChange={(e) => setDown(down.map((x, j) => j === i ? { ...x, from: e.target.value } : x))} placeholder="model mạnh" />
+            <span>→</span><input className="grow" value={r.to} onChange={(e) => setDown(down.map((x, j) => j === i ? { ...x, to: e.target.value } : x))} placeholder="model thay thế" />
+            <button onClick={() => setDown(down.filter((_, j) => j !== i))}>×</button></div>
+        ))}
+        <button className="small-btn" onClick={() => setDown([...down, { from: "", to: "" }])}>+ thêm dòng</button>
+        <b className="small">Đơn giá (USD cho 1 triệu token) — tự nhập theo bảng giá hiện hành của nhà cung cấp</b>
+        {prices.map((r, i) => (
+          <div key={i} className="row"><input className="grow" value={r.model} onChange={(e) => setPrices(prices.map((x, j) => j === i ? { ...x, model: e.target.value } : x))} placeholder="tên model, vd. claude-opus-5-5" />
+            <input style={{ width: 90 }} type="number" min="0" step="any" value={r.in} onChange={(e) => setPrices(prices.map((x, j) => j === i ? { ...x, in: e.target.value } : x))} placeholder="vào" />
+            <input style={{ width: 90 }} type="number" min="0" step="any" value={r.out} onChange={(e) => setPrices(prices.map((x, j) => j === i ? { ...x, out: e.target.value } : x))} placeholder="ra" />
+            <button onClick={() => setPrices(prices.filter((_, j) => j !== i))}>×</button></div>
+        ))}
+        <button className="small-btn" onClick={() => setPrices([...prices, { model: "", in: "", out: "" }])}>+ thêm model</button>
+        <p className="muted small">App không kèm sẵn đơn giá vì giá thay đổi và tôi không có số liệu đã kiểm chứng. Chưa nhập đơn giá thì app vẫn đếm token nhưng chi phí hiện 0 kèm dấu ⚠.</p>
       </div>
 
       <div className="card">

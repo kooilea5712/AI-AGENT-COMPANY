@@ -3,7 +3,12 @@ export const API: string = import.meta.env.DEV ? (import.meta.env.VITE_API ?? "h
 
 export type JobRow = { id: string; title: string; state: string; step: number; fix_round: number; round: number; workspace: string | null; created_at: number; updated_at: number; actor: string | null };
 export type TestCase = { id: string; title: string; criterion: string; steps: string[]; setup?: string[]; expect?: Record<string, unknown>; manual_check?: string };
+export type Usage = {
+  tokens_in: number; tokens_out: number; cost: number; calls: number; unpriced_calls: number; budget: number; tier: "full" | "economy";
+  by_model: { model: string; connection: string; tokens_in: number; tokens_out: number; cost: number; priced: number; calls: number }[];
+};
 export type Job = JobRow & {
+  usage: Usage; tier: "full" | "economy"; budget: number | null;
   description: string; questions: string | null; error: string | null; note: string | null; base_branch: string | null;
   brief: string | null; plan: string | null; handoff: string | null; owner_approves_brief: boolean;
   qa_reports: { name: string; text: string }[]; testcases: TestCase[];
@@ -31,6 +36,7 @@ export type Settings = {
   connections: Record<string, Conn>; roles: Record<string, Cand[]>; roles_meta: Record<string, { label: string; hint: string }>;
   presets: { id: string; label: string; note: string; roles: Record<string, [string, string][]> }[];
   owner_approves_brief: boolean; sandbox_mode: "docker" | "local"; data_file: string;
+  default_tier: "full" | "economy"; job_budget_usd: number; downgrade: Record<string, string>; prices: Record<string, { in: number; out: number }>;
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -64,10 +70,12 @@ export const api = {
   files: (id: string) => req<FileRow[]>(`/jobs/${id}/files`),
   fileUrl: (id: string, path: string) => `${API}/jobs/${id}/files/${path}`,
   fileText: async (id: string, path: string) => (await fetch(`${API}/jobs/${id}/files/${path}`)).text(),
-  create: (description: string, files: File[], workspace: string) => {
+  create: (description: string, files: File[], workspace: string, tier: string, budget: string) => {
     const f = new FormData();
     f.append("description", description);
     f.append("workspace", workspace);
+    f.append("tier", tier);
+    f.append("budget", budget);
     files.forEach((x) => f.append("files", x));
     return req<{ id: string }>("/jobs", { method: "POST", body: f });
   },
@@ -82,6 +90,7 @@ export const api = {
   approveHandoff: (id: string) => bare(`/jobs/${id}/handoff/approve`),
   feedback: (id: string, text: string, files: File[]) => form(`/jobs/${id}/handoff/reject`, text, files),
   cancel: (id: string) => bare(`/jobs/${id}/cancel`),
+  setBudget: (id: string, usd: number | null) => req<Usage>(`/jobs/${id}/budget`, json("PUT", { usd })),
   retry: (id: string, text: string, files: File[]) => form(`/jobs/${id}/retry`, text, files),
   health: (deep: boolean) => req<any>(`/health${deep ? "?deep=true" : ""}`),
   settings: () => req<Settings>("/settings"),

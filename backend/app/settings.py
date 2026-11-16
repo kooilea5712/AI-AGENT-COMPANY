@@ -12,7 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import config
+from . import config, context
 
 DATA_DIR = Path(os.getenv("STUDIO_DATA_DIR") or Path.home() / ".studio-ai")
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -28,6 +28,7 @@ ROLES: dict[str, dict] = {
     "qa_runner": {"label": "Kiểm thử viên: chạy testcase", "hint": "Chạy hết testcase và ghi kết quả. Model rẻ/nhanh (Haiku hoặc model free)."},
     "vision": {"label": "Mắt (model vision)", "hint": "Nhìn ảnh để tự kiểm. Cần model có vision."},
 }
+TIERS = ("full", "economy")
 LEGACY_ROLE = {"brain": "director", "coder": "engineer", "fast": "qa_runner", "vision": "vision"}
 
 
@@ -64,6 +65,13 @@ def defaults() -> dict:
         },
         "owner_approves_brief": False,       # False: Giám đốc tự chốt brief; chủ chỉ xem kết quả cuối
         "sandbox_mode": config.SANDBOX_MODE,  # docker | local
+        # Mức đầu tư mặc định của job mới: full = đúng model đã cấu hình; economy = hạ bậc Claude theo bảng `downgrade`.
+        "default_tier": "full",
+        "downgrade": {OPUS: SONNET, SONNET: HAIKU},
+        # Hạn mức chi phí mỗi job (USD); 0 = không giới hạn. Chỉ tính các model có đơn giá trong `prices`.
+        "job_budget_usd": 0.0,
+        # Đơn giá USD cho 1 triệu token: {"claude-opus-5-5": {"in": x, "out": y}}. KHÔNG có sẵn số liệu: bạn tự nhập theo bảng giá hiện hành.
+        "prices": {},
     }
 
 
@@ -78,9 +86,11 @@ def load() -> dict:
     for role, lst in (user.get("roles") or {}).items():
         if role in ROLES and isinstance(lst, list) and lst:
             s["roles"][role] = lst
-    for k in ("owner_approves_brief", "sandbox_mode"):
+    for k in ("owner_approves_brief", "sandbox_mode", "default_tier", "job_budget_usd"):
         if k in user:
             s[k] = user[k]
+    s["downgrade"].update(user.get("downgrade") or {})
+    s["prices"] = user.get("prices") or {}
     return s
 
 
@@ -118,11 +128,27 @@ def update(patch: dict) -> dict:
             if not clean:
                 raise ValueError(f"Vai {role} phải có ít nhất một model")
             user["roles"][role] = clean
-    for k in ("owner_approves_brief", "sandbox_mode"):
+    for k in ("owner_approves_brief", "sandbox_mode", "default_tier", "job_budget_usd"):
         if k in patch:
             if k == "sandbox_mode" and patch[k] not in ("docker", "local"):
                 raise ValueError("sandbox_mode phải là docker hoặc local")
+            if k == "default_tier" and patch[k] not in TIERS:
+                raise ValueError("default_tier phải là full hoặc economy")
+            if k == "job_budget_usd" and (not isinstance(patch[k], (int, float)) or patch[k] < 0):
+                raise ValueError("job_budget_usd phải là số >= 0 (0 = không giới hạn)")
             user[k] = patch[k]
+    if "downgrade" in patch:
+        user["downgrade"] = {str(a): str(b) for a, b in patch["downgrade"].items() if str(a).strip() and str(b).strip()}
+    if "prices" in patch:
+        clean = {}
+        for model, p in patch["prices"].items():
+            try:
+                clean[str(model)] = {"in": float(p["in"]), "out": float(p["out"])}
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"Đơn giá của {model} phải có dạng {{in: số, out: số}} (USD cho 1 triệu token)")
+            if clean[str(model)]["in"] < 0 or clean[str(model)]["out"] < 0:
+                raise ValueError("Đơn giá không được âm")
+        user["prices"] = clean
     _write(user)
     return load()
 
@@ -144,14 +170,20 @@ def public(s: dict | None = None) -> dict:
     return s
 
 
-def candidates(role: str, s: dict | None = None) -> list[dict]:
-    """Danh sách ứng viên đã giải quyết cho một vai. Ứng viên không dùng được có `skip` kèm lý do."""
+def candidates(role: str, s: dict | None = None, tier: str | None = None) -> list[dict]:
+    """Danh sách ứng viên đã giải quyết cho một vai. Ứng viên không dùng được có `skip` kèm lý do.
+    tier=economy (lấy từ job hiện tại qua context nếu không truyền): model Claude được hạ bậc theo bảng `downgrade`
+    (Opus -> Sonnet, Sonnet -> Haiku); ứng viên không phải Anthropic giữ nguyên."""
     s = s or load()
+    tier = tier or context.tier_var.get()
     role = LEGACY_ROLE.get(role, role)
     out = []
     for x in s["roles"][role]:
         c = s["connections"].get(x["connection"])
-        item = {"connection": x["connection"], "model": x["model"], "label": (c or {}).get("label", x["connection"]),
+        model = x["model"]
+        if tier == "economy" and x["connection"] == "anthropic":
+            model = s["downgrade"].get(model, model)
+        item = {"connection": x["connection"], "model": model, "label": (c or {}).get("label", x["connection"]),
                 "base_url": (c or {}).get("base_url", ""), "api_key": (c or {}).get("api_key", ""), "skip": None}
         if c is None:
             item["skip"] = "kết nối không tồn tại"
