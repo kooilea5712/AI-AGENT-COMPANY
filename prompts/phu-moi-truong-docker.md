@@ -8,3 +8,4 @@ describe_image CHỈ để xem hình vẽ gì, bố cục, màu sắc, chữ. KH
 - kích thước + kênh alpha: magick identify -format "%w x %h, alpha=%A" file.png
 - độ trong suốt: python -c "from PIL import Image; im=Image.open('file.png').convert('RGBA'); print(im.size, im.getpixel((0,0)))" (pixel góc có alpha 0 nghĩa là nền trong suốt)
 Số đo từ công cụ luôn thắng mô tả của describe_image.
+Mẹo dữ liệu thử đã chạy được: tạo ảnh JPEG có EXIF ngày chụp bằng Pillow: python -c "from PIL import Image; im=Image.new('RGB',(8,8)); ex=im.getexif(); ex.get_ifd(0x8769)[0x9003]='2019:03:14 09:26:53'; im.save('x.jpg', exif=ex)" (ngày EXIF có dạng YYYY:MM:DD HH:MM:SS). Đặt ngày sửa file: touch -d '2020-05-01 10:00:00' file. Không có hàm Image._create_exif.

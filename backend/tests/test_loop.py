@@ -87,4 +87,12 @@ async def test_identical_call_loop_detected(tmp_path):
     (tmp_path / "j").mkdir()
     llm = FakeLLM([call("list_dir", "{}", str(i)) for i in range(10)])
     r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 20)
-    assert not r.ok and "lặp" in r.reason and r.steps == 3
+    assert not r.ok and "lặp" in r.reason and r.steps == 6      # lần 1 chỉ nhắc, lần 2 mới dừng
+
+
+async def test_missing_argument_error_tells_model_the_right_parameters(tmp_path):
+    (tmp_path / "j").mkdir()
+    llm = FakeLLM([call("write_file", '{"content": "x"}'), {"role": "assistant", "content": "ok"}])    # thiếu path
+    r = await run_agent(llm, "engineer", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 5)
+    msg = llm.seen[1][-1]["content"]
+    assert r.ok and "BẮT BUỘC: path, content" in msg and "write_file nhận các tham số" in msg

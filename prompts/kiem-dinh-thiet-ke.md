@@ -13,3 +13,4 @@ Cách làm:
 ]}
 Quy tắc: mỗi case phải có expect (ưu tiên, vì máy kiểm lại được) hoặc manual_check. Dữ liệu thử tạo trong `setup` ở thư mục tạm; KHÔNG dựa vào file có sẵn ngoài sản phẩm. Lệnh chạy tại thư mục làm việc (nơi có sản phẩm). Tối đa 25 case, ngắn gọn, độc lập nhau.
 Không thêm yêu cầu mới ngoài brief. Xong trả lời một dòng "ĐÃ VIẾT TESTCASE".
+Lệnh bạn nhận đã kèm BẢN CHỤP SẢN PHẨM (cây file và nội dung file giao). Đừng mất lượt vào ls/cat lặp lại: viết testcase ngay, rồi ghi file bằng write_file.

@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, JobRow, StaffInfo } from "./api";
-import JobView from "./JobView";
+import { api, JobRow, Person } from "./api";
+import JobView, { Attach } from "./JobView";
+import SettingsPage from "./Settings";
 import System from "./System";
 import Team from "./Team";
 import { fmtDate, icon, STATE_VI, ThemeMode, tone, useTheme, WAITING_YOU } from "./lib";
 
-type Page = "jobs" | "team" | "system";
+type Page = "jobs" | "team" | "settings" | "system";
 type Filter = "all" | "need" | "run" | "done";
 
 export default function App() {
   const [page, setPage] = useState<Page>("jobs");
   const [sel, setSel] = useState<string | null>(() => { try { return localStorage.getItem("sel"); } catch { return null; } });
   const [jobs, setJobs] = useState<JobRow[]>([]);
-  const [info, setInfo] = useState<StaffInfo | null>(null);
+  const [info, setInfo] = useState<{ staff: Person[] } | null>(null);
   const [offline, setOffline] = useState(false);
   const [creating, setCreating] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; job: string }[]>([]);
@@ -39,6 +40,8 @@ export default function App() {
   useEffect(() => { try { sel ? localStorage.setItem("sel", sel) : localStorage.removeItem("sel"); } catch { /* bỏ qua */ } }, [sel]);
   useEffect(() => { if (toasts.length) { const t = setTimeout(() => setToasts((x) => x.slice(1)), 7000); return () => clearTimeout(t); } }, [toasts]);
 
+  const director = info?.staff.find((p) => p.id === "director");
+  const noClaude = !!director && director.models[0]?.includes("bỏ qua");
   const need = jobs.filter((j) => WAITING_YOU.has(j.state)).length;
   useEffect(() => { document.title = need ? `(${need}) Studio AI` : "Studio AI"; }, [need]);
   const open = (id: string) => { setSel(id); setPage("jobs"); };
@@ -50,6 +53,7 @@ export default function App() {
         <nav>
           <button className={page === "jobs" ? "on" : ""} onClick={() => setPage("jobs")}>📋 Công việc{need > 0 && <span className="count">{need}</span>}</button>
           <button className={page === "team" ? "on" : ""} onClick={() => setPage("team")}>👥 Đội ngũ</button>
+          <button className={page === "settings" ? "on" : ""} onClick={() => setPage("settings")}>⚙️ Cài đặt</button>
           <button className={page === "system" ? "on" : ""} onClick={() => setPage("system")}>🛠 Hệ thống</button>
         </nav>
         <div className="grow" />
@@ -65,6 +69,10 @@ export default function App() {
       </aside>
       <div className="content">
         {offline && <div className="banner">Mất kết nối tới backend. Đang thử lại…</div>}
+        {page === "jobs" && noClaude && (
+          <div className="banner warn">Giám đốc chưa dùng Claude Opus vì chưa có khoá API; đang dùng model dự phòng: <b>{director?.models.find((m) => !m.includes("bỏ qua")) ?? "không có"}</b>.{" "}
+            <a href="#" onClick={(e) => { e.preventDefault(); setPage("settings"); }}>Nhập khoá trong Cài đặt</a></div>
+        )}
         {page === "jobs" && (
           <div className="cols">
             <JobList jobs={jobs} sel={sel} setSel={setSel} onNew={() => setCreating(true)} />
@@ -73,7 +81,8 @@ export default function App() {
             )}</main>
           </div>
         )}
-        {page === "team" && <Team staff={info?.staff ?? []} models={info?.models ?? {}} mode={info?.llm_mode ?? ""} openJob={open} />}
+        {page === "team" && <Team staff={info?.staff ?? []} openJob={open} openSettings={() => setPage("settings")} />}
+        {page === "settings" && <SettingsPage />}
         {page === "system" && <System />}
       </div>
       {creating && <NewJob onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); open(id); refresh(); }} />}
@@ -118,13 +127,16 @@ function JobList({ jobs, sel, setSel, onNew }: { jobs: JobRow[]; sel: string | n
 function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const [desc, setDesc] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [ws, setWs] = useState("");
+  const [wsCheck, setWsCheck] = useState<{ ok: boolean; note?: string; error?: string } | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const checkWs = async () => { try { setWsCheck(await api.checkWorkspace(ws)); } catch (e) { setWsCheck({ ok: false, error: String(e) }); } };
   const submit = async () => {
     setBusy(true); setErr("");
     try {
       try { if (Notification.permission === "default") Notification.requestPermission(); } catch { /* không bắt buộc */ }
-      onCreated((await api.create(desc, files)).id);
+      onCreated((await api.create(desc, files, ws.trim())).id);
     } catch (e) { setErr(String(e)); setBusy(false); }
   };
   return (
@@ -134,8 +146,13 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (id: s
         <p className="muted">Mô tả việc cần làm. Giám đốc sẽ đọc, có thể hỏi lại, rồi viết brief cho bạn duyệt.</p>
         <textarea autoFocus rows={7} placeholder="Ví dụ: Viết script Python đổi tên ảnh theo ngày chụp, có chế độ chạy thử…" value={desc} onChange={(e) => setDesc(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && desc.trim()) submit(); }} />
-        <label className="filepick">📎 Đính kèm file (không bắt buộc)<input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} /></label>
-        {files.length > 0 && <div className="muted small">{files.map((f) => f.name).join(", ")}</div>}
+        <Attach files={files} setFiles={setFiles} />
+        <details open={!!ws}><summary>📁 Làm trực tiếp trên một thư mục trong máy (không bắt buộc)</summary>
+          <p className="muted small">Agent sửa thẳng project của bạn, trên nhánh Git riêng <code>studio/&lt;mã-job&gt;</code> và commit sau mỗi lần chạy; hệ thống không push và không đụng nhánh khác. Thư mục phải sạch (không có thay đổi chưa commit).</p>
+          <div className="row"><input className="grow" placeholder="Ví dụ: D:\Projects\my-app" value={ws} onChange={(e) => { setWs(e.target.value); setWsCheck(null); }} />
+            <button disabled={!ws.trim()} onClick={checkWs}>Kiểm tra</button></div>
+          {wsCheck && <div className={wsCheck.ok ? "okc small" : "err small"}>{wsCheck.ok ? "✔ " + wsCheck.note : "✘ " + wsCheck.error}</div>}
+        </details>
         {err && <p className="err">{err}</p>}
         <div className="row end"><button onClick={onClose}>Huỷ</button><button className="primary" disabled={busy || !desc.trim()} onClick={submit}>Tạo job <span className="muted">(Ctrl+Enter)</span></button></div>
       </div>

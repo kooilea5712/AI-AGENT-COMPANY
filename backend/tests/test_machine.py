@@ -32,8 +32,6 @@ class Script:
 PLAN1 = json.dumps({"summary": "làm một việc", "tasks": [
     {"id": "T1", "role": "software", "title": "viết script", "goal": "viết script", "outputs": ["deliverables/a.py"], "acceptance": ["chạy được"]}]})
 CASES = json.dumps({"cases": [{"id": "TC1", "title": "chạy", "criterion": "chạy được", "steps": ["python deliverables/a.py"], "manual_check": "xem đầu ra"}]})
-PASS = json.dumps([{"id": "TC1", "status": "PASS", "evidence": "ok"}])
-FAIL = json.dumps([{"id": "TC1", "status": "FAIL", "evidence": "sai"}])
 
 
 def director_front(plan=PLAN1):
@@ -44,9 +42,10 @@ def eng_ok():
     return [wf("deliverables/a.py", "print(1)"), say("BÁO CÁO XONG")]
 
 
-def qa(results=PASS):
+def qa(verdict="PASS"):
+    """Kiểm thử viên chạy MỖI case một lượt và trả lời theo mẫu 'KẾT QUẢ: PASS|FAIL'."""
     return dict(qa_author=[wf("@job/qa/testcases.json", CASES), say("ĐÃ VIẾT TESTCASE")],
-                qa_runner=[wf("@job/qa/results.json", results), say("ĐÃ CHẠY HẾT")])
+                qa_runner=[say(f"KẾT QUẢ: {verdict} đã chạy, bằng chứng: " + ("ok" if verdict == "PASS" else "sai"))])
 
 
 @pytest.fixture
@@ -184,7 +183,7 @@ async def test_missing_declared_output_gets_one_retry_then_blocks(orch):
 async def test_qa_fail_twice_then_blocked_and_retry(orch):
     eng = eng_ok()
     llm = Script(director=director_front(), engineer=eng * 3, qa_author=qa()["qa_author"],
-                 qa_runner=[wf("@job/qa/results.json", FAIL), say("x")] * 3)
+                 qa_runner=[say("KẾT QUẢ: FAIL sai")] * 3)
     o = orch(llm)
     jid = o.create_job("x")
     await o.run(jid)
@@ -198,24 +197,62 @@ async def test_qa_fail_twice_then_blocked_and_retry(orch):
     assert j["state"] == m.EXECUTING and j["fix_round"] == 0 and "đừng dùng EXIF" in j["note"] and "@job/inputs/" in j["note"]
 
 
-async def test_runner_must_cover_every_case_and_is_nudged(orch):
-    llm = Script(director=director_front() + [wf("@job/deliverables/HANDOFF.md", "h"), say("ok")], engineer=eng_ok(),
-                 qa_author=qa()["qa_author"],
-                 qa_runner=[say("xong (nhưng chưa ghi results)"), wf("@job/qa/results.json", PASS), say("ĐÃ CHẠY HẾT")])
+async def test_runner_without_verdict_is_asked_again_then_fails_the_case(orch):
+    llm = Script(director=director_front(), engineer=eng_ok() * 3, qa_author=qa()["qa_author"],
+                 qa_runner=[say("xong rồi")] * 6)                        # không bao giờ kết luận đúng mẫu
     o = orch(llm)
     jid = o.create_job("x")
     await o.run(jid)
+    assert len([c for c in llm.calls if c[0] == "qa_runner"]) == 6          # 2 lượt mỗi vòng x 3 vòng (gốc + 2 sửa)
+    assert any("chưa kết luận đúng mẫu" in c[1] for c in llm.calls if c[0] == "qa_runner")
+    assert o.get(jid)["state"] == m.BLOCKED
+
+
+async def test_each_testcase_gets_its_own_runner_call(orch):
+    two = json.dumps({"cases": [
+        {"id": "TC1", "title": "a", "criterion": "c", "steps": ["x"], "manual_check": "xem"},
+        {"id": "TC2", "title": "b", "criterion": "c", "steps": ["y"], "manual_check": "xem"}]})
+    llm = Script(director=director_front() + [wf("@job/deliverables/HANDOFF.md", "h"), say("ok")], engineer=eng_ok(),
+                 qa_author=[wf("@job/qa/testcases.json", two), say("ok")], qa_runner=[say("KẾT QUẢ: PASS 1"), say("KẾT QUẢ: PASS 2")])
+    o = orch(llm)
+    jid = o.create_job("x")
+    await o.run(jid)
+    calls = [c[1] for c in llm.calls if c[0] == "qa_runner"]
+    assert len(calls) == 2 and '"TC1"' in calls[0] and '"TC2"' in calls[1] and '"TC2"' not in calls[0]   # mỗi lượt chỉ MỘT case
     assert o.get(jid)["state"] == m.AWAITING_HANDOFF
-    assert any("chưa có kết quả cho: TC1" in c[1] for c in llm.calls if c[0] == "qa_runner")
+
+
+async def test_broken_testcase_setup_goes_back_to_qa_author_not_to_engineer(orch, monkeypatch):
+    bad = json.dumps({"cases": [{"id": "TC1", "title": "t", "criterion": "c", "setup": ["python -c 'import khong_co'"], "steps": ["echo hi"],
+                                 "expect": {"exit_code": 0}}]})
+    good = json.dumps({"cases": [{"id": "TC1", "title": "t", "criterion": "c", "setup": [], "steps": ["echo hi"], "expect": {"exit_code": 0}}]})
+    monkeypatch.setattr(config, "SANDBOX_MODE", "docker")
+    calls = []
+
+    def fake(root, script, meta, timeout, isolated):
+        calls.append(script)
+        return (1, "", "ModuleNotFoundError") if "khong_co" in script else (0, "@@SETUP_OK@@ hi ", "")   # setup hỏng thì KHÔNG in dấu mốc
+
+    monkeypatch.setattr(m, "run_in_sandbox", fake)
+    llm = Script(director=director_front() + [wf("@job/deliverables/HANDOFF.md", "h"), say("ok")], engineer=eng_ok(),
+                 qa_author=[wf("@job/qa/testcases.json", bad), say("ok"), wf("@job/qa/testcases.json", good), say("đã sửa")],
+                 qa_runner=[say("KẾT QUẢ: FAIL setup lỗi"), say("KẾT QUẢ: PASS ok")])
+    o = orch(llm)
+    jid = o.create_job("x")
+    await o.run(jid)
+    j = o.get(jid)
+    assert j["state"] == m.AWAITING_HANDOFF and j["qa_repairs"] == 1 and j["fix_round"] == 0      # sản phẩm KHÔNG bị bắt sửa
+    assert [c[0] for c in llm.calls].count("engineer") == 2      # đúng MỘT lần chạy của Kỹ sư (2 lượt gọi: công cụ + báo cáo)
+    assert any("SỬA TESTCASE" in c[1] and "KHÔNG phải của sản phẩm" in c[1] for c in llm.calls if c[0] == "qa_author")
 
 
 async def test_audit_overrides_a_lying_runner(orch, monkeypatch):
     cases = json.dumps({"cases": [{"id": "TC1", "title": "chạy", "criterion": "c", "steps": ["./run"], "expect": {"exit_code": 0, "stdout_contains": ["XONG"]}}]})
     monkeypatch.setattr(config, "SANDBOX_MODE", "docker")
-    monkeypatch.setattr(m, "run_in_sandbox", lambda *a, **k: (1, "lỗi gì đó", ""))   # chạy lại độc lập: thất bại thật
+    monkeypatch.setattr(m, "run_in_sandbox", lambda *a, **k: (1, "@@SETUP_OK@@ lỗi gì đó", ""))   # setup ổn, chạy lại độc lập thất bại thật
     llm = Script(director=director_front(), engineer=eng_ok() * 3,
                  qa_author=[wf("@job/qa/testcases.json", cases), say("ok")],
-                 qa_runner=[wf("@job/qa/results.json", PASS), say("x")] * 3)         # runner nói PASS mãi
+                 qa_runner=[say("KẾT QUẢ: PASS ok")] * 3)                              # runner nói PASS mãi
     o = orch(llm)
     jid = o.create_job("x")
     await o.run(jid)

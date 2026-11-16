@@ -54,6 +54,7 @@ async def run_agent(llm, role: str, system: str, user: str, tools: JobTools, log
     bad = 0
     recent: list[str] = []
     empty = 0
+    loop_nudged = False
     for step in range(1, max_steps + 1):
         log("llm", f"[{name}] bước {step}: gọi vai '{role}'")
         try:
@@ -87,8 +88,18 @@ async def run_agent(llm, role: str, system: str, user: str, tools: JobTools, log
         sig = json.dumps([(c["function"]["name"], c["function"].get("arguments")) for c in calls], sort_keys=True)
         recent.append(sig)
         if len(recent) >= 3 and len(set(recent[-3:])) == 1:
-            log("error", f"[{name}] lặp cùng một tool call 3 lần liên tiếp, dừng")
-            return AgentResult("", step, False, "model lặp lại cùng một tool call")
+            if loop_nudged:
+                log("error", f"[{name}] vẫn lặp cùng một tool call sau khi được nhắc, dừng")
+                return AgentResult("", step, False, "model lặp lại cùng một tool call")
+            # Lần đầu chỉ nhắc: model nhỏ hay quẩn ở bước "khám phá" nhưng thường làm tiếp được nếu bị chỉ thẳng.
+            loop_nudged = True
+            recent.clear()
+            log("warn", f"[{name}] lặp cùng một tool call 3 lần, nhắc model làm bước tiếp theo")
+            for c in calls:
+                messages.append({"role": "tool", "tool_call_id": c.get("id", "x"),
+                                 "content": "BỎ QUA: bạn vừa gọi y hệt lệnh này 3 lần liên tiếp và kết quả không đổi. Dùng kết quả đã có "
+                                            "để làm BƯỚC TIẾP THEO (ghi file hoặc kết luận), đừng gọi lại lệnh này."})
+            continue
         for c in calls:
             fn = c["function"]["name"]
             raw = c["function"].get("arguments") or "{}"
@@ -104,12 +115,22 @@ async def run_agent(llm, role: str, system: str, user: str, tools: JobTools, log
                 log("tool", f"[{name}] {fn}({_short(args)}) -> {_short(result)}")
             except (ToolError, ValueError, TypeError, json.JSONDecodeError) as e:
                 bad += 1
-                result = f"LỖI: {e}. Hãy gọi lại đúng định dạng."
+                # Lỗi Python kiểu "missing 1 required positional argument" model nhỏ không hiểu và lặp lại y hệt: nói rõ tham số đúng.
+                result = f"LỖI: {e}. {_usage(fn, specs)}Hãy gọi lại đúng định dạng."
                 log("tool_error", f"[{name}] {fn}: {e}")
             messages.append({"role": "tool", "tool_call_id": c.get("id", "x"), "content": str(result)})
         if bad >= MAX_CONSECUTIVE_BAD:
             return AgentResult("", step, False, "model liên tục gọi tool sai định dạng")
     return AgentResult("", max_steps, False, f"hết giới hạn {max_steps} bước")
+
+
+def _usage(fn: str, specs: list[dict]) -> str:
+    for t in specs:
+        if t["function"]["name"] == fn:
+            params = t["function"]["parameters"]
+            req = ", ".join(params.get("required", [])) or "(không bắt buộc tham số nào)"
+            return f"Tool {fn} nhận các tham số: {', '.join(params['properties'])}; BẮT BUỘC: {req}. "
+    return ""
 
 
 def _short(x, n=200) -> str:

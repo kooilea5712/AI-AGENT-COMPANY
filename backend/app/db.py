@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS commits_job ON commits(job_id, id);
 
 # Cột thêm sau này: DB tạo từ bản trước được nâng cấp tại chỗ.
 MIGRATIONS = {
-    "jobs": {"blocked_from": "TEXT", "workspace": "TEXT", "base_branch": "TEXT", "round": "INTEGER NOT NULL DEFAULT 0"},
+    "jobs": {"blocked_from": "TEXT", "workspace": "TEXT", "base_branch": "TEXT", "round": "INTEGER NOT NULL DEFAULT 0", "qa_repairs": "INTEGER NOT NULL DEFAULT 0"},
     "events": {"actor": "TEXT"},
 }
 

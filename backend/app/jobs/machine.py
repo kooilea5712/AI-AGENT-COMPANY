@@ -43,7 +43,7 @@ TRANSITIONS = {
     PLANNING: {EXECUTING, BLOCKED},
     EXECUTING: {QA_DESIGN, BLOCKED},
     QA_DESIGN: {QA_RUN, BLOCKED},
-    QA_RUN: {EXECUTING, HANDOFF, BLOCKED},                 # FAIL còn lượt sửa -> EXECUTING; hết lượt -> BLOCKED
+    QA_RUN: {EXECUTING, QA_DESIGN, HANDOFF, BLOCKED},      # FAIL còn lượt sửa -> EXECUTING; testcase lỗi -> QA_DESIGN; hết lượt -> BLOCKED
     HANDOFF: {AWAITING_HANDOFF, BLOCKED},
     AWAITING_HANDOFF: {LESSONS, PLANNING},                 # chấp nhận / phản hồi (Giám đốc lập kế hoạch bổ sung)
     LESSONS: {DONE},
@@ -220,6 +220,8 @@ class Orchestrator:
         target = EXECUTING if src == QA_RUN else src
         fields = {"error": None, "fix_round": 0 if src in (QA_RUN, EXECUTING) else j["fix_round"]}
         saved = self.save_files(job_id, files or [], f"tt{int(time.time())}")
+        if src == QA_DESIGN:      # bị chặn khi thiết kế testcase: thiết kế lại từ đầu thay vì dùng bộ cũ hỏng
+            (self.job_dir(job_id) / "qa" / "testcases.json").unlink(missing_ok=True)
         if note or saved:
             self._owner_says(job_id, note or "(đính kèm file)", saved)
             fields["note"] = "CHỦ STUDIO HƯỚNG DẪN KHI TIẾP TỤC: " + self._note(note, saved)
@@ -416,7 +418,7 @@ class Orchestrator:
         self.say(job_id, "director", f"Kế hoạch đợt {rnd}: {plan.get('summary', '')}\n" + "\n".join(
             f"- {t['id']} [{prompts.ROLES[planning.normalize_role(t['role'])][1]}] {t['title']}" for t in order))
         self._commit(job_id, f"plan đợt {rnd}")
-        self.set_state(job_id, EXECUTING, round=rnd, note=None, fix_round=0)
+        self.set_state(job_id, EXECUTING, round=rnd, note=None, fix_round=0, qa_repairs=0)
 
     @staticmethod
     def _render_plan(plan: dict, order: list[dict], rnd: int) -> str:
@@ -510,71 +512,115 @@ class Orchestrator:
         root = self.work_root(job_id)
         return [o for o in spec.get("outputs", []) if not re.search(r"[*?]", o) and not (root / o).exists()]
 
+    def _snapshot(self, job_id: str) -> str:
+        """Bản chụp sản phẩm đưa thẳng cho Kiểm định: cây file + nội dung các file sản phẩm khai báo trong plan.json.
+        Model nhỏ hay lang thang 'ls' mãi nếu phải tự khám phá; có sẵn thông tin thì vào việc ngay."""
+        root = self.work_root(job_id)
+        skip = {".git", "node_modules", "__pycache__", ".venv", "qa", "inputs", "reports", "plans"}
+        tree = []
+        for pth in sorted(root.rglob("*")):
+            rel = pth.relative_to(root)
+            if pth.is_file() and not (set(rel.parts) & skip) and len(tree) < 60:
+                tree.append(rel.as_posix())
+        parts = ["Cây file trong thư mục làm việc:\n" + "\n".join(f"- {t}" for t in tree)]
+        try:
+            outs = [o for t in self._plan(job_id)["tasks"] for o in t.get("outputs", [])]
+        except (OSError, ValueError, KeyError):
+            outs = []
+        shown = 0
+        for o in dict.fromkeys(outs):
+            f = root / o
+            if f.is_file() and shown < 6 and f.stat().st_size < 60000:
+                try:
+                    parts.append(f"=== {o} ===\n" + f.read_text(encoding="utf-8")[:8000])
+                    shown += 1
+                except UnicodeDecodeError:
+                    pass
+        return "\n\n".join(parts)
+
     # --- Bước 6a: Kiểm định thiết kế testcase -------------------------------------------
     async def _do_qa_design(self, job_id: str):
-        d = self.job_dir(job_id)
+        j, d = self.get(job_id), self.job_dir(job_id)
         tc = d / "qa" / "testcases.json"
-        if tc.exists():                       # vòng sửa: bộ testcase vẫn đúng, không viết lại
+        repair = (j["note"] or "").startswith("SỬA TESTCASE")
+        if tc.exists() and not repair:        # vòng sửa sản phẩm: bộ testcase vẫn đúng, không viết lại
             return self.set_state(job_id, QA_RUN)
+        before = tc.stat().st_mtime if tc.exists() else None
         errors = []
         for attempt in range(1, 4):
-            user = (self._ctx(job_id) + "\n\nThiết kế testcase cho sản phẩm hiện tại. Thư mục làm việc chứa sản phẩm."
-                    + (f"\n\nLẦN TRƯỚC testcases.json KHÔNG HỢP LỆ, sửa và ghi lại:\n- " + "\n- ".join(errors) if errors else ""))
+            user = (self._ctx(job_id) + "\n\nThiết kế testcase cho sản phẩm hiện tại. Thư mục làm việc chứa sản phẩm.\n\n"
+                    "BẢN CHỤP SẢN PHẨM (đã đủ thông tin, KHÔNG cần khám phá thêm bằng ls/cat; chỉ chạy thử nếu thật sự cần hiểu cách dùng):\n" + self._snapshot(job_id))
+            if repair:
+                user += "\n\n" + j["note"] + "\nHãy ghi lại @job/qa/testcases.json đã sửa (giữ nguyên id các case)."
+            if errors:
+                user += "\n\nLẦN TRƯỚC testcases.json KHÔNG HỢP LỆ, sửa và ghi lại:\n- " + "\n- ".join(errors)
             r = await self._agent(job_id, staff.QA_AUTHOR, "qa_author", prompts.qa_author_system(), user, max_tokens=8000)
             if not r.ok:
                 return self._block(job_id, r.reason or "Kiểm định không thiết kế được testcase")
+            if not tc.exists() or (before is not None and tc.stat().st_mtime <= before):
+                errors = ["Bạn chưa ghi @job/qa/testcases.json bằng write_file"]
+                continue
             try:
-                cases = planning.load_json(tc.read_text(encoding="utf-8")) if tc.exists() else None
+                cases = planning.load_json(tc.read_text(encoding="utf-8"))
             except ValueError as e:
                 errors = [f"testcases.json không phải JSON hợp lệ: {e}"]
                 continue
-            errors = planning.validate_cases(cases) if cases is not None else ["Bạn chưa ghi @job/qa/testcases.json bằng write_file"]
+            errors = planning.validate_cases(cases)
             if not errors:
                 break
             self.event(job_id, "warn", "testcases.json chưa hợp lệ: " + "; ".join(errors), staff.QA_AUTHOR)
         if errors:
             return self._block(job_id, "Kiểm định không tạo được testcases.json hợp lệ: " + "; ".join(errors))
-        self.event(job_id, "qa", f"đã thiết kế {len(cases['cases'])} testcase", staff.QA_AUTHOR)
+        self.event(job_id, "qa", f"đã {'sửa' if repair else 'thiết kế'} {len(cases['cases'])} testcase", staff.QA_AUTHOR)
         self._commit(job_id, f"testcase ({len(cases['cases'])} case)")
-        self.set_state(job_id, QA_RUN)
+        self.set_state(job_id, QA_RUN, note=None)
 
     # --- Bước 6b: Kiểm thử viên chạy HẾT testcase + code kiểm lại độc lập ---------------------
     async def _do_qa_run(self, job_id: str):
         j, d = self.get(job_id), self.job_dir(job_id)
         cases = planning.load_json((d / "qa" / "testcases.json").read_text(encoding="utf-8"))["cases"]
-        res_f = d / "qa" / "results.json"
-        res_f.unlink(missing_ok=True)
         results: dict[str, dict] = {}
-        missing = [c["id"] for c in cases]
-        for attempt in range(1, 4):           # nhắc chạy nốt các case còn thiếu, tối đa 2 lần nhắc
-            user = f"Chạy hết các testcase trong @job/qa/testcases.json (có {len(cases)} case)."
-            if attempt > 1:
-                user += f"\nLẦN TRƯỚC bạn chưa có kết quả cho: {', '.join(missing)}. Chạy nốt rồi ghi ĐẦY ĐỦ results.json (gồm cả các case đã chạy)."
-            r = await self._agent(job_id, staff.QA_RUNNER, "qa_runner", prompts.qa_runner_system(), user, max_tokens=6000)
-            if not r.ok:
-                return self._block(job_id, r.reason or "Kiểm thử viên không chạy được testcase")
-            try:
-                raw = planning.load_json(res_f.read_text(encoding="utf-8")) if res_f.exists() else []
-                results = {str(x["id"]): x for x in raw if isinstance(x, dict) and "id" in x}
-            except (ValueError, TypeError, KeyError):
-                results = {}
-            missing = [c["id"] for c in cases if c["id"] not in results]
-            if not missing:
-                break
+        # MỖI testcase một lượt gọi riêng, ngắn và tập trung: model nhỏ/free hay bỏ dở giữa danh sách dài nếu gặp lỗi ở case đầu.
+        for c in cases:
+            verdict, evidence = None, ""
+            for attempt in (1, 2):
+                user = "Chạy testcase sau (chỉ MỘT case này) rồi kết luận theo mẫu.\n" + json.dumps(c, ensure_ascii=False, indent=1)
+                if attempt > 1:
+                    user += "\n\nLẦN TRƯỚC bạn chưa kết luận đúng mẫu. Chạy lại và dòng đầu của câu trả lời cuối phải là KẾT QUẢ: PASS hoặc KẾT QUẢ: FAIL."
+                r = await self._agent(job_id, staff.QA_RUNNER, "qa_runner", prompts.qa_runner_system(), user, max_tokens=3000)
+                if not r.ok:
+                    return self._block(job_id, r.reason or f"Kiểm thử viên không chạy được {c['id']}")
+                m = re.search(r"KẾT\s*QUẢ\s*[:：]\s*\**\s*(PASS|FAIL)", r.text, re.I)
+                if m:
+                    verdict, evidence = m.group(1).upper(), r.text.strip()
+                    break
+            results[c["id"]] = {"id": c["id"], "status": verdict or "FAIL", "evidence": evidence or "Kiểm thử viên không kết luận được"}
+        (d / "qa" / "results.json").write_text(json.dumps(list(results.values()), ensure_ascii=False, indent=1), encoding="utf-8")
         rows = await self._audit(job_id, cases, results)
-        passed = sum(1 for x in rows if x["final"] == "PASS")
-        report = self._render_qa(rows, passed, j)
+        # Lỗi ở bước setup của testcase là lỗi CỦA TESTCASE, không đổ cho người làm sản phẩm: gửi về cho Kiểm định sửa (tối đa 2 lần).
+        bad = [x for x in rows if x["final"] == "TEST_ERROR"]
+        if bad and j["qa_repairs"] < 2:
+            self._commit(job_id, f"kiểm thử: {len(bad)} testcase lỗi, trả Kiểm định sửa")
+            lst = "\n".join(f"- {x['id']}: {x['why']}" for x in bad)
+            self.event(job_id, "qa", f"{len(bad)} testcase lỗi ở bước setup, trả Kiểm định sửa", staff.QA_RUNNER)
+            return self.set_state(job_id, QA_DESIGN, qa_repairs=j["qa_repairs"] + 1,
+                                  note=f"SỬA TESTCASE: các case sau lỗi ở bước setup (lỗi của testcase, KHÔNG phải của sản phẩm):\n{lst}")
+        real = [x for x in rows if x["final"] != "TEST_ERROR"]
+        if not real:
+            return self._block(job_id, "Mọi testcase đều lỗi ở bước setup dù đã sửa; cần chủ studio xem lại")
+        passed = sum(1 for x in real if x["final"] == "PASS")
+        report = self._render_qa(rows, passed, len(real), j)
         rname = f"qa-bao-cao-vong{j['round']}-{j['fix_round']}.md"
         (d / rname).write_text(report, encoding="utf-8")
-        self.event(job_id, "qa", f"{passed}/{len(rows)} testcase PASS", staff.QA_RUNNER)
-        self._commit(job_id, f"kiểm thử {passed}/{len(rows)} PASS")
-        if passed == len(rows):
-            self.say(job_id, "director", f"Kiểm định: {passed}/{len(rows)} testcase PASS (đã kiểm lại độc lập).")
+        self.event(job_id, "qa", f"{passed}/{len(real)} testcase PASS" + (f" ({len(bad)} case lỗi testcase bị loại)" if bad else ""), staff.QA_RUNNER)
+        self._commit(job_id, f"kiểm thử {passed}/{len(real)} PASS")
+        if passed == len(real):
+            self.say(job_id, "director", f"Kiểm định: {passed}/{len(real)} testcase PASS (đã kiểm lại độc lập)." + (f" Lưu ý: {len(bad)} testcase lỗi thiết kế đã bị loại." if bad else ""))
             return self.set_state(job_id, HANDOFF)
-        fails = "\n".join(f"- {x['id']} {x['title']}: {x['why']}" for x in rows if x["final"] != "PASS")
+        fails = "\n".join(f"- {x['id']} {x['title']}: {x['why']}" for x in real if x["final"] != "PASS")
         if j["fix_round"] < config.MAX_FIX_ROUNDS:
             self.set_state(job_id, EXECUTING, fix_round=j["fix_round"] + 1,
-                           note=f"KIỂM THỬ TRẢ FAIL {len(rows) - passed}/{len(rows)} (nguyên văn, xem thêm @job/{rname}):\n{fails}")
+                           note=f"KIỂM THỬ TRẢ FAIL {len(real) - passed}/{len(real)} (nguyên văn, xem thêm @job/{rname}):\n{fails}")
         else:
             self._block(job_id, f"Vẫn FAIL sau {config.MAX_FIX_ROUNDS} vòng sửa; cần chủ studio quyết định. Xem {rname}")
 
@@ -591,9 +637,15 @@ class Orchestrator:
                    "evidence": (rr or {}).get("evidence", ""), "audited": False, "final": "PASS" if runner == "PASS" else "FAIL",
                    "why": "" if runner == "PASS" else ((rr or {}).get("evidence") or "Kiểm thử viên không chạy case này")}
             if planning.machine_checkable(c) and config.SANDBOX_MODE == "docker":
-                script = "\n".join([*c.get("setup", []), *c["steps"]])
+                # `set -e` cho phần setup + dấu mốc: setup hỏng thì dừng TRƯỚC dấu mốc => lỗi của testcase, không phải của sản phẩm.
+                script = "set -e\n" + "\n".join(c.get("setup", [])) + "\necho @@SETUP_OK@@\nset +e\n" + "\n".join(c["steps"])
                 try:
                     code, so, se = await asyncio.to_thread(run_in_sandbox, root, script, meta, config.COMMAND_TIMEOUT * 2, True)
+                    if "@@SETUP_OK@@" not in so:
+                        row.update(audited=True, final="TEST_ERROR", why="setup của testcase thất bại: " + _short(so + se, 400))
+                        out.append(row)
+                        continue
+                    so = so.split("@@SETUP_OK@@", 1)[1]
                     ok, why = planning.evaluate(c, code, so, se)
                     row.update(audited=True, final="PASS" if ok else "FAIL", why=("" if ok else why + f". Đầu ra: {_short(so + se, 300)}"))
                     if runner == "PASS" and not ok:
@@ -605,8 +657,8 @@ class Orchestrator:
         return out
 
     @staticmethod
-    def _render_qa(rows: list[dict], passed: int, j: dict) -> str:
-        head = f"KẾT QUẢ: {'PASS' if passed == len(rows) else 'FAIL'}\n\n{passed}/{len(rows)} testcase đạt (đợt {j['round']}, vòng sửa {j['fix_round']}).\n"
+    def _render_qa(rows: list[dict], passed: int, total: int, j: dict) -> str:
+        head = f"KẾT QUẢ: {'PASS' if passed == total else 'FAIL'}\n\n{passed}/{total} testcase đạt (đợt {j['round']}, vòng sửa {j['fix_round']}).\n"
         body = ["", "| Case | Tiêu chí | Kiểm thử viên | Kiểm lại độc lập | Kết luận |", "|---|---|---|---|---|"]
         for x in rows:
             body.append(f"| {x['id']} {x['title']} | {x['criterion']} | {x['runner']} | {'có' if x['audited'] else 'không (cần mắt)'} | **{x['final']}** |")
