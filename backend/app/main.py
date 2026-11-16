@@ -106,12 +106,17 @@ def job_detail(job_id: str):
     j = _job(job_id)
     d = orch.job_dir(job_id)
     qa = sorted(d.glob("qa-bao-cao-vong*.md"))
-    cases = _read(job_id, "qa/testcases.json")
+    # Model có thể ghi testcases.json dở dang/hỏng JSON: giao diện vẫn phải mở được job, nên parse có bảo vệ.
+    try:
+        cases = json.loads(_read(job_id, "qa/testcases.json") or "null")
+        cases = cases["cases"] if isinstance(cases, dict) and isinstance(cases.get("cases"), list) else []
+    except ValueError:
+        cases = []
     return {**j, "step": machine.STEP_OF[j["state"]],
             "brief": _read(job_id, "brief.md"), "plan": _read(job_id, "plan.md"),
             "handoff": _read(job_id, "deliverables/HANDOFF.md"),
             "qa_reports": [{"name": p.name, "text": p.read_text(encoding="utf-8")} for p in qa],
-            "testcases": json.loads(cases)["cases"] if cases else [],
+            "testcases": cases,
             "owner_approves_brief": settings.load()["owner_approves_brief"]}
 
 

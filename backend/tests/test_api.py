@@ -145,3 +145,11 @@ def test_git_endpoint_lists_job_commits(client):
     assert "thử" in c.get(f"/jobs/{jid}/git/{rev}").json()["text"]
     assert c.get(f"/jobs/{jid}/git/zzzz").status_code == 400
     assert c.get(f"/jobs/{jid}/files/.git/HEAD").status_code == 404                  # không tải được ruột .git
+
+
+def test_job_detail_survives_broken_testcases_json(client):
+    c, main = client
+    jid = main.orch.create_job("x")
+    (main.orch.job_dir(jid) / "qa" / "testcases.json").write_text('{"cases": [ {"id": "TC1" ', encoding="utf-8")   # JSON dở dang
+    r = c.get(f"/jobs/{jid}")
+    assert r.status_code == 200 and r.json()["testcases"] == []

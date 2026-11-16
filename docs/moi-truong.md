@@ -38,3 +38,12 @@ Cách thử: `backend\.venv\Scripts\python scripts\probe_tools.py <tag>...`
    đừng chạy thêm thứ gì dùng GPU cùng lúc. Combo OmniRoute trỏ vào hai biến thể này.
 2. **OmniRoute cắt yêu cầu sau 15 giây** (`resilience requestQueue.maxWaitMs=15000`, lỗi 504): xem README. Endpoint chỉnh cần đăng nhập
    dashboard nên chưa chỉnh được trong phiên này; lần chạy nghiệm thu dùng `LLM_MODE=direct`.
+
+## Cập nhật 2026-11-16
+
+- Ollama tự cập nhật lên **0.40.16** giữa phiên (cơ chế tự cập nhật của chính Ollama; nó tắt máy chủ model vài phút nên job đang chạy có thể lỗi mạng tạm thời, dùng "Tiếp tục"). Model và tool call vẫn đúng.
+- ArtCraft (cài sẵn bởi người dùng): VectorCraft CLI `C:\Users\ADMIN\AppData\Local\Programs\ArtCraft\VectorCraft\vectorcraft-cli.exe` (885 lệnh, `run --commands steps.json --export out.svg`),
+  PdfCraft CLI `C:\Program Files\ArtCraft\PdfCraft\pdfcraft-cli.exe`. Cả hai headless, không cần đăng nhập. Ứng dụng ArtCraft có giao diện dùng API đám mây tính credit nên không tích hợp.
+- Model theo vai và khoá API: `~/.studio-ai/settings.json` (xem README, mục Cài đặt model). Chưa có khoá Claude trong phiên làm việc nên mọi vai chạy bằng model local dự phòng.
+- Quan sát với model local làm Kiểm định/Kiểm thử: `studio-gemma4-12b` hay ghi testcase JSON hỏng hoặc gọi `write_file` thiếu tham số; `studio-qwen3-4b` chậm (suy nghĩ dài) và hay bỏ dở danh sách dài.
+  Các biện pháp trong code: chạy từng testcase một lượt gọi, kiểm lại độc lập bằng code, trả testcase hỏng về Kiểm định, nhắc khi lặp, thông báo lỗi tool kèm tham số đúng.

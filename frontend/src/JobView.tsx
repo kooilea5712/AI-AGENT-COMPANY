@@ -137,7 +137,7 @@ function Progress({ job, flow, tasks, staff }: { job: Job; flow: Flow | null; ta
             <div className="now-who"><b>{cur.actor ?? (job.state === "done" ? "Cả đội" : "—")}</b>{who && <span className="muted"> · {who.title}</span>}</div>
             <div>{job.state === "done" ? "Job đã hoàn tất" : cur.label}{curTask ? ` — ${curTask.task_id}: ${curTask.title}` : ""}</div>
             {who && <div className="muted small">Nhiệm vụ: {who.duties.slice(0, 2).join("; ")}</div>}
-            {who?.models?.[0] && <div className="muted small">Model: {who.models[0]}</div>}
+            {who && who.models.length > 0 && <div className="muted small">Model đang dùng: {who.models.find((m) => !m.includes("bỏ qua")) ?? "chưa có ứng viên dùng được, xem Cài đặt"}</div>}
           </div>
           <div className="now-t">
             {job.state === "done" ? <>tổng thời gian<br /><b>{fmtDur(cur.since - (flow?.segments[0]?.started ?? cur.since))}</b></>

@@ -358,3 +358,17 @@ async def test_upload_name_cannot_escape(orch):
     assert not (o.job_dir(jid).parent / "evil.txt").exists()
     saved = o.save_files(jid, [("../../x.txt", b"1")], "t")
     assert saved == ["inputs/t/x.txt"]
+
+
+async def test_broken_testcases_file_is_redesigned_not_crashing(orch):
+    llm = Script(director=[wf("@job/deliverables/HANDOFF.md", "h"), say("ok")],  # chỉ bước bàn giao: test bắt đầu từ EXECUTING
+                  engineer=eng_ok(),
+                 qa_author=[wf("@job/qa/testcases.json", CASES), say("viết lại")], qa_runner=[say("KẾT QUẢ: PASS ok")])
+    o = orch(llm)
+    jid = o.create_job("x")
+    (o.job_dir(jid) / "qa" / "testcases.json").write_text('{"cases": [ {"id": "TC1" ', encoding="utf-8")   # file dở dang từ lần chạy trước
+    o.set_state(jid, m.BRIEF_REVIEW); o.set_state(jid, m.PLANNING); o.set_state(jid, m.EXECUTING, round=1)
+    (o.job_dir(jid) / "plan.json").write_text(PLAN1, encoding="utf-8")
+    o.db.execute("INSERT INTO tasks(job_id, round, task_id, role, title, status) VALUES (?,?,?,?,?,?)", (jid, 1, "T1", "software", "viết", "pending"))
+    await o.run(jid)
+    assert o.get(jid)["state"] == m.AWAITING_HANDOFF

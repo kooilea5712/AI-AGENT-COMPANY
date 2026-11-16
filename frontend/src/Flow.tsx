@@ -74,7 +74,7 @@ export default function FlowView({ flow, staff }: { flow: FlowData; staff: Perso
       {nodes.map((nd) => {
         const p = person(nd.name), st = stat(nd.name), active = cur === nd.name;
         const cls = "node" + (active ? (flow.current?.working ? " active" : " waiting") : visited.has(nd.name) ? " done" : "");
-        const model = p?.models?.[0]?.split(" (")[0];
+        const model = p?.models?.find((m) => !m.includes("bỏ qua"))?.split(" (")[0];   // model thực sự phục vụ (ứng viên đầu không bị bỏ qua)
         return (
           <g key={nd.name} className={cls} transform={`translate(${nd.x},${nd.y})`}>
             <rect width={W} height={H} rx="14" />

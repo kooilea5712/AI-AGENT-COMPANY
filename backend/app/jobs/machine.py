@@ -538,13 +538,22 @@ class Orchestrator:
                     pass
         return "\n\n".join(parts)
 
+    @staticmethod
+    def _cases_ok(tc: Path) -> bool:
+        try:
+            return not planning.validate_cases(planning.load_json(tc.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return False
+
     # --- Bước 6a: Kiểm định thiết kế testcase -------------------------------------------
     async def _do_qa_design(self, job_id: str):
         j, d = self.get(job_id), self.job_dir(job_id)
         tc = d / "qa" / "testcases.json"
         repair = (j["note"] or "").startswith("SỬA TESTCASE")
-        if tc.exists() and not repair:        # vòng sửa sản phẩm: bộ testcase vẫn đúng, không viết lại
+        if tc.exists() and not repair and self._cases_ok(tc):    # vòng sửa sản phẩm: bộ testcase vẫn đúng, không viết lại
             return self.set_state(job_id, QA_RUN)
+        if tc.exists() and not repair:        # file có nhưng hỏng (model ghi dở, hoặc backend chết giữa chừng): viết lại từ đầu
+            tc.unlink()
         before = tc.stat().st_mtime if tc.exists() else None
         errors = []
         for attempt in range(1, 4):
