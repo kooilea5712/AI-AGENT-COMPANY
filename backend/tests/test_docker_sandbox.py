@@ -38,7 +38,8 @@ def test_cannot_see_host_files(tools, tmp_path):
     assert "bí mật" not in out
 
 
-def test_no_network(tools):
+def test_no_network(tools, monkeypatch):
+    monkeypatch.setattr(config, "SANDBOX_NETWORK", "none")      # kiểm chế độ cô lập, dù .env của máy đang mở mạng
     out = tools.run_command("python -c \"import urllib.request as u; u.urlopen('http://example.com', timeout=5)\"")
     assert "exit=0" not in out
 

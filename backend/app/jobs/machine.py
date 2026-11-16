@@ -363,6 +363,13 @@ class Orchestrator:
         if done >= s["autopilot_retries"]:
             self.event(job_id, "auto_retry_stop", f"Đã tự thử lại {done} lần vẫn bị chặn: dừng hẳn, chờ chủ studio.")
             return False
+        prev = self.db.one("SELECT message FROM events WHERE job_id=? AND kind='auto_retry' AND ts>? ORDER BY id DESC LIMIT 1",
+                           (job_id, last_owner))
+        if prev and prev["message"].endswith("Lỗi trước: " + _short(j["error"], 300)):
+            # Thử lại mà ra đúng lỗi cũ: thường do môi trường (thiếu thư viện, không mạng...) chứ không phải do xui, thử tiếp chỉ tốn thời gian.
+            self.event(job_id, "auto_retry_stop", "Tự thử lại vẫn ra đúng lỗi cũ: nhiều khả năng do môi trường hoặc model, "
+                                                  "không thử tiếp nữa, chờ chủ studio.")
+            return False
         n = done + 1
         self.event(job_id, "auto_retry", f"Chế độ tự chạy: tự tiếp tục lần {n}/{s['autopilot_retries']} sau "
                                          f"{config.AUTO_RETRY_DELAY * n:.0f}s. Lỗi trước: {_short(j['error'], 300)}")

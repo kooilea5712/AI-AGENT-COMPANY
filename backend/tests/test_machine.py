@@ -442,12 +442,22 @@ async def test_autopilot_never_asks_and_accepts_handoff(orch):
 
 async def test_autopilot_retries_blocked_job_then_gives_up(orch):
     settings.update({"autopilot": True, "autopilot_retries": 2})
-    # Lần đầu + 2 lần tự thử lại, lượt nào cũng không viết brief (mỗi lượt = 2 lần gọi vì có nhắc lại) -> dừng hẳn.
-    o = orch(Script(director=[say("xong")] * 6))
+    # Thử lại ra ĐÚNG lỗi cũ (mỗi lượt = 2 lần gọi vì có nhắc lại) -> dừng sau 1 lần, không đốt hết lượt.
+    o = orch(Script(director=[say("xong")] * 4))
     jid = o.create_job("x")
     await o.run(jid)
     assert o.get(jid)["state"] == m.BLOCKED
-    kinds = [e["kind"] for e in o.db.query("SELECT kind FROM events WHERE job_id=?", (jid,))]
+    ev = o.db.query("SELECT kind, message FROM events WHERE job_id=?", (jid,))
+    assert [e["kind"] for e in ev].count("auto_retry") == 1
+    assert any(e["kind"] == "auto_retry_stop" and "đúng lỗi cũ" in e["message"] for e in ev)
+
+    # Lỗi KHÁC nhau mỗi lần thì dùng hết số lượt rồi mới dừng.
+    o3 = orch(Script(director=[say("xong")] * 6))
+    jid3 = o3.create_job("z")
+    errs = iter(["lỗi A", "lỗi B", "lỗi C"])
+    o3._do_intake = lambda job_id: _fake_block(o3, job_id, next(errs))
+    await o3.run(jid3)
+    kinds = [e["kind"] for e in o3.db.query("SELECT kind FROM events WHERE job_id=?", (jid3,))]
     assert kinds.count("auto_retry") == 2 and "auto_retry_stop" in kinds
 
     # Tự thử lại thành công: job đi tiếp tới cuối, không cần chủ.
@@ -458,6 +468,10 @@ async def test_autopilot_retries_blocked_job_then_gives_up(orch):
     jid2 = o2.create_job("y")
     await o2.run(jid2)
     assert o2.get(jid2)["state"] == m.DONE
+
+
+async def _fake_block(o, job_id, reason):
+    o._block(job_id, reason)
 
 
 async def test_autopilot_does_not_retry_owner_cancel(orch):
