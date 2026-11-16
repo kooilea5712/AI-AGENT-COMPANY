@@ -372,3 +372,25 @@ async def test_broken_testcases_file_is_redesigned_not_crashing(orch):
     o.db.execute("INSERT INTO tasks(job_id, round, task_id, role, title, status) VALUES (?,?,?,?,?,?)", (jid, 1, "T1", "software", "viết", "pending"))
     await o.run(jid)
     assert o.get(jid)["state"] == m.AWAITING_HANDOFF
+
+
+async def test_owner_can_cancel_a_running_job_and_resume_it(orch):
+    import asyncio
+
+    class Slow:
+        async def chat(self, role, messages, tools=None, max_tokens=4096):
+            await asyncio.sleep(30)      # model "treo": job đang chạy lâu
+
+    o = orch(Slow())
+    jid = o.create_job("x")
+    o.schedule(jid)
+    await asyncio.sleep(0.2)
+    o.cancel(jid)
+    await asyncio.sleep(0.2)
+    j = o.get(jid)
+    assert j["state"] == m.BLOCKED and j["blocked_from"] == m.INTAKE and "dừng job" in j["error"]
+    assert o._tasks[jid].cancelled() or o._tasks[jid].done()          # agent đã bị dừng thật, không chạy ngầm
+    with pytest.raises(InvalidAction):
+        o.cancel(jid)                                                   # đã dừng rồi
+    o.retry(jid, "tiếp đi")                                             # và tiếp tục được
+    assert o.get(jid)["state"] == m.INTAKE

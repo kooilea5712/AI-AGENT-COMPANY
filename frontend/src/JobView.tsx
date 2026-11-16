@@ -43,6 +43,9 @@ export default function JobView({ id, staff }: { id: string; staff: Person[] }) 
         {job.round > 1 && <span className="badge">đợt {job.round}</span>}
         {job.fix_round > 0 && <span className="badge">vòng sửa {job.fix_round}/2</span>}
         {job.workspace && <span className="badge" title={job.workspace}>📁 project trên máy</span>}
+        {RUNNING.has(s) && s !== "lessons" && (
+          <button className="small-btn danger" onClick={() => { if (confirm("Dừng job này? Mọi thứ đã làm được giữ lại; bạn có thể bấm Tiếp tục sau.")) api.cancel(id).then(load).catch((e) => setErr(String(e))); }}>⏹ Dừng job</button>
+        )}
       </div>
       {err && <p className="err">{err}</p>}
       <NeedsYou job={job} reload={load} setErr={setErr} />

@@ -150,6 +150,16 @@ async def retry(job_id: str, text: str = Form(""), files: list[UploadFile] = Fil
     return await _act(job_id, orch.retry, text, await _upload(files))
 
 
+@app.post("/jobs/{job_id}/cancel")
+async def cancel(job_id: str):
+    _job(job_id)
+    try:
+        orch.cancel(job_id)
+    except machine.InvalidAction as e:
+        raise HTTPException(409, str(e))
+    return {"state": orch.get(job_id)["state"]}
+
+
 @app.post("/jobs/{job_id}/message")
 async def message(job_id: str, text: str = Form(""), files: list[UploadFile] = File(default=[])):
     """Chủ nhắn Giám đốc bất cứ lúc nào (kèm file). Tuỳ trạng thái mà là câu trả lời/phản hồi/hướng dẫn tiếp tục/tin xếp hàng."""

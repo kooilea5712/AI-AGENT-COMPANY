@@ -1,0 +1,21 @@
+{
+  "summary": "Viết script Python để đọc file văn bản, lọc các dòng là số nguyên và tính tổng, sau đó in kết quả theo định dạng yêu cầu.",
+  "tasks": [
+    {
+      "id": "T1",
+      "role": "software",
+      "title": "Viết script tính tổng",
+      "goal": "Script Python sum_integers.py hoàn thiện và file input.txt mẫu.",
+      "inputs": [],
+      "outputs": [
+        "deliverables/sum_integers.py",
+        "deliverables/input.txt"
+      ],
+      "acceptance": [
+        "Chạy python sum_integers.py với input.txt chứa 1, 2, 3, không_phải_số trả về TONG=6",
+        "Chạy với input.txt chứa 10, 20 trả về TONG=30"
+      ],
+      "depends_on": []
+    }
+  ]
+}

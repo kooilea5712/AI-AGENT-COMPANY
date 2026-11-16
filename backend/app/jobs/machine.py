@@ -227,6 +227,16 @@ class Orchestrator:
             fields["note"] = "CHỦ STUDIO HƯỚNG DẪN KHI TIẾP TỤC: " + self._note(note, saved)
         self.set_state(job_id, target, **fields)
 
+    def cancel(self, job_id: str):
+        """Chủ dừng job đang chạy. Job chuyển sang 'blocked' (giữ mọi thứ đã làm); bấm "Tiếp tục" để chạy tiếp từ bước đó."""
+        j = self._require(job_id, *(RUNNING - {LESSONS}))
+        t = self._tasks.get(job_id)
+        if t and not t.done():
+            t.cancel()        # dừng agent đang chạy; lệnh sandbox đang dở tự hết giờ theo timeout
+        self.event(job_id, "message", "Chủ studio đã dừng job", staff.OWNER)
+        self.say(job_id, "owner", "Dừng job.")
+        self.set_state(job_id, BLOCKED, error="Chủ studio đã dừng job", blocked_from=j["state"])
+
     def message(self, job_id: str, text: str, files=None):
         """Chủ nhắn Giám đốc BẤT CỨ LÚC NÀO (chủ chỉ nói chuyện với Giám đốc). Tuỳ trạng thái mà tin này là câu trả lời,
         phản hồi, hướng dẫn tiếp tục, hoặc được xếp hàng để Giám đốc đọc ở bước kế tiếp."""

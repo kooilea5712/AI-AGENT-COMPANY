@@ -81,6 +81,7 @@ export const api = {
   rejectBrief: (id: string, text: string, files: File[]) => form(`/jobs/${id}/brief/reject`, text, files),
   approveHandoff: (id: string) => bare(`/jobs/${id}/handoff/approve`),
   feedback: (id: string, text: string, files: File[]) => form(`/jobs/${id}/handoff/reject`, text, files),
+  cancel: (id: string) => bare(`/jobs/${id}/cancel`),
   retry: (id: string, text: string, files: File[]) => form(`/jobs/${id}/retry`, text, files),
   health: (deep: boolean) => req<any>(`/health${deep ? "?deep=true" : ""}`),
   settings: () => req<Settings>("/settings"),

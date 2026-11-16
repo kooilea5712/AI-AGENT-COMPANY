@@ -1,0 +1,161 @@
+{
+  "cases": [
+    {
+      "id": "TC1",
+      "title": "Tổng cơ bản",
+      "criterion": "Chạy với input.txt chứa 10, 20 trả về TONG=30",
+      "setup": [
+        "echo \"10\" > input.txt",
+        "echo \"20\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=30"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC2",
+      "title": "Bỏ qua dòng không phải số",
+      "criterion": "Chạy với input.txt chứa 1, 2, 3, không_phải_số trả về TONG=6",
+      "setup": [
+        "echo \"1\" > input.txt",
+        "echo \"2\" >> input.txt",
+        "echo \"3\" >> input.txt",
+        "echo \"không_phải_số\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=6"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC3",
+      "title": "File rỗng",
+      "criterion": "Xử lý file rỗng",
+      "setup": [
+        "echo \"\" > input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=0"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC4",
+      "title": "Dòng trống và khoảng trắng",
+      "criterion": "Bỏ qua dòng trống hoặc chỉ có khoảng trắng",
+      "setup": [
+        "echo \"10\" > input.txt",
+        "echo \"  \" >> input.txt",
+        "echo \"\" >> input.txt",
+        "echo \"20\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=30"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC5",
+      "title": "Số âm",
+      "criterion": "Tính tổng cả số âm",
+      "setup": [
+        "echo \"-10\" > input.txt",
+        "echo \"5\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=-5"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC6",
+      "title": "Số cực lớn",
+      "criterion": "Xử lý số nguyên lớn",
+      "setup": [
+        "echo \"999999999999999999\" > input.txt",
+        "echo \"1\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=1000000000000000000"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC7",
+      "title": "File không tồn tại",
+      "criterion": "Thông báo lỗi khi thiếu file",
+      "setup": [
+        "rm -f input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "Lỗi: Không tìm thấy file input.txt"
+        ]
+      },
+      "manual_check": ""
+    },
+    {
+      "id": "TC8",
+      "title": "Dữ liệu hỗn hợp",
+      "criterion": "Xử lý hỗn hợp số, chữ, khoảng trắng",
+      "setup": [
+        "echo \"10\" > input.txt",
+        "echo \"abc\" >> input.txt",
+        "echo \" 20 \" >> input.txt",
+        "echo \"1.5\" >> input.txt",
+        "echo \"30\" >> input.txt"
+      ],
+      "steps": [
+        "python sum_integers.py"
+      ],
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": [
+          "TONG=60"
+        ]
+      },
+      "manual_check": ""
+    }
+  ]
+}
