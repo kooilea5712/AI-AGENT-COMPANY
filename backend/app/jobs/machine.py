@@ -236,7 +236,9 @@ class Orchestrator:
         src = j["blocked_from"] or INTAKE
         # QA_RUN bị chặn nghĩa là đã hết vòng sửa: cho model con làm lại với phản hồi mới và cấp lại đủ lượt.
         target = EXECUTING if src == QA_RUN else src
-        fields = {"error": None, "fix_round": 0 if src in (QA_RUN, EXECUTING) else j["fix_round"]}
+        # Chỉ QA_RUN (hết vòng sửa) mới cấp lại đủ lượt. Dừng ở EXECUTING thì phải chạy lại ĐÚNG task đang hỏng (kể cả FIX n),
+        # nếu reset fix_round thì task đó bị bỏ qua và hướng dẫn của chủ bị báo lỗi của Kiểm thử ghi đè.
+        fields = {"error": None, "fix_round": 0 if src == QA_RUN else j["fix_round"]}
         saved = self.save_files(job_id, files or [], f"tt{int(time.time())}")
         if src == QA_DESIGN:      # bị chặn khi thiết kế testcase: thiết kế lại từ đầu thay vì dùng bộ cũ hỏng
             (self.job_dir(job_id) / "qa" / "testcases.json").unlink(missing_ok=True)
@@ -381,7 +383,7 @@ class Orchestrator:
         target = EXECUTING if src == QA_RUN else src
         if src == QA_DESIGN:
             (self.job_dir(job_id) / "qa" / "testcases.json").unlink(missing_ok=True)
-        fix = 0 if src in (QA_RUN, EXECUTING) else j["fix_round"]
+        fix = 0 if src == QA_RUN else j["fix_round"]
         self.set_state(job_id, target, error=None, fix_round=fix, note=f"HỆ THỐNG TỰ TIẾP TỤC (lần {n}) sau lỗi: {_short(j['error'], 400)}. "
                                                          "Hãy tránh lặp lại đúng lỗi đó: đổi cách làm nếu cần.")
         return True
@@ -404,9 +406,10 @@ class Orchestrator:
         return JobTools(self.work_root(job_id), self._vision_fn(), meta_root=self.job_dir(job_id),
                         isolated=llm_role in ("qa_author", "qa_runner"), write_scope=scope)
 
-    async def _agent(self, job_id: str, who: str, llm_role: str, system: str, user: str, max_tokens: int = 4096):
+    async def _agent(self, job_id: str, who: str, llm_role: str, system: str, user: str, max_tokens: int = 4096,
+                     steps: int | None = None):
         return await run_agent(self.llm, llm_role, system, user, self.tools_for(job_id, llm_role),
-                               lambda k, m: self.event(job_id, k, m, who), config.MAX_STEPS_PER_TASK, who, max_tokens=max_tokens)
+                               lambda k, m: self.event(job_id, k, m, who), steps or config.MAX_STEPS_PER_TASK, who, max_tokens=max_tokens)
 
     def _lessons(self) -> str:
         return self.lessons_path.read_text(encoding="utf-8") if self.lessons_path.exists() else "(chưa có)"
@@ -620,12 +623,15 @@ class Orchestrator:
                 "Điều đã biết": "\n".join(known)})
             (d / "work").mkdir(exist_ok=True)
             (d / "work" / f"phieu-{row['task_id']}-dot{rnd}.md").write_text(order, encoding="utf-8")
-            r = await self._agent(job_id, role_name, llm_role, prompts.specialist_system(role_file), order)
+            # Task sửa lỗi thường đụng nhiều module cùng lúc nên được gấp đôi số bước.
+            budget = config.MAX_STEPS_PER_TASK * 2 if fix else None
+            r = await self._agent(job_id, role_name, llm_role, prompts.specialist_system(role_file), order, steps=budget)
             missing = self._missing_outputs(job_id, spec)
             if r.ok and missing:      # Giám đốc không tin báo cáo: file khai báo phải có thật; cho làm bù MỘT lần
                 self.event(job_id, "warn", f"{row['task_id']} thiếu sản phẩm {missing}, yêu cầu làm bù", staff.DIRECTOR)
                 r = await self._agent(job_id, role_name, llm_role, prompts.specialist_system(role_file),
-                                      order + "\n\nBÁO CÁO TRƯỚC CỦA BẠN CHƯA ĐỦ: các file sau chưa tồn tại: " + ", ".join(missing) + ". Hãy tạo chúng rồi báo lại.")
+                                      order + "\n\nBÁO CÁO TRƯỚC CỦA BẠN CHƯA ĐỦ: các file sau chưa tồn tại: " + ", ".join(missing) + ". Hãy tạo chúng rồi báo lại.",
+                                      steps=budget)
                 missing = self._missing_outputs(job_id, spec)
             rep = f"reports/{row['task_id']}-dot{rnd}.md"
             (d / "reports").mkdir(exist_ok=True)
