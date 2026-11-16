@@ -9,9 +9,8 @@ import json
 from dataclasses import dataclass
 from typing import Callable
 
-from ..tools.sandbox import JobTools, TOOL_SPECS, ToolError
+from ..tools.sandbox import JobTools, ToolError, tool_specs
 
-_TOOL_NAMES = {t["function"]["name"] for t in TOOL_SPECS}
 LogFn = Callable[[str, str], None]  # (loại sự kiện, nội dung)
 MAX_CONSECUTIVE_BAD = 5  # quá số lần tool call hỏng liên tiếp thì bỏ cuộc thay vì đốt quota
 
@@ -24,11 +23,10 @@ class AgentResult:
     reason: str = ""
 
 
-def _text_tool_calls(content: str) -> list[dict]:
+def _text_tool_calls(content: str, names: set[str]) -> list[dict]:
     """Một số model local (vd. qwen2.5-coder) viết tool call thành JSON trong content, thường
     bọc trong ```json và có khi nhiều call một lượt, thay vì trường tool_calls.
     Quét từng object JSON bằng raw_decode (regex tham lam sẽ dính hai khối làm một)."""
-    names = {t["function"]["name"] for t in TOOL_SPECS}
     dec, i, out = json.JSONDecoder(), 0, []
     content = content or ""
     while (i := content.find("{", i)) != -1:
@@ -46,24 +44,30 @@ def _text_tool_calls(content: str) -> list[dict]:
     return out
 
 
-async def run_agent(llm, combo: str, system: str, user: str, tools: JobTools, log: LogFn,
-                    max_steps: int, name: str = "agent") -> AgentResult:
+async def run_agent(llm, role: str, system: str, user: str, tools: JobTools, log: LogFn,
+                    max_steps: int, name: str = "agent", specs: list[dict] | None = None,
+                    max_tokens: int = 4096) -> AgentResult:
+    """role = vai LLM (director, engineer, ...): quyết định model nào được gọi VÀ agent có những công cụ nào."""
+    specs = specs if specs is not None else tool_specs(role)
+    names = {t["function"]["name"] for t in specs}
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     bad = 0
     recent: list[str] = []
     empty = 0
     for step in range(1, max_steps + 1):
-        log("llm", f"[{name}] bước {step}: gọi combo '{combo}'")
+        log("llm", f"[{name}] bước {step}: gọi vai '{role}'")
         try:
-            resp = await llm.chat(combo, messages, tools=TOOL_SPECS)
+            resp = await llm.chat(role, messages, tools=specs, max_tokens=max_tokens)
         except Exception as e:  # noqa: BLE001 - lỗi mạng/model: dừng agent, để máy trạng thái quyết định
             log("error", f"[{name}] lỗi LLM: {e}")
             return AgentResult("", step, False, f"lỗi LLM: {e}")
         msg = resp["message"]
-        log("llm", f"[{name}] model phục vụ: {resp.get('model')}")
+        log("llm", f"[{name}] model phục vụ: {resp.get('connection', '?')}/{resp.get('model')}")
+        for f in resp.get("failed") or []:
+            log("warn", f"[{name}] ứng viên bị bỏ qua: {f}")   # để chủ thấy khi đang chạy bằng model dự phòng
         calls = msg.get("tool_calls") or []
         if not calls:
-            calls = _text_tool_calls(msg.get("content") or "")
+            calls = _text_tool_calls(msg.get("content") or "", names)
             if calls:
                 log("llm", f"[{name}] tool call nằm trong content, đã tự tách ({len(calls)})")
                 msg = {"role": "assistant", "content": None}
@@ -92,7 +96,7 @@ async def run_agent(llm, combo: str, system: str, user: str, tools: JobTools, lo
                 args = json.loads(raw) if isinstance(raw, str) else raw
                 if not isinstance(args, dict):
                     raise ValueError("arguments phải là object JSON")
-                if fn not in _TOOL_NAMES:
+                if fn not in names:
                     raise ToolError(f"Không có tool '{fn}'")
                 # Tool chạy ở thread riêng để lệnh dài (subprocess) không làm đứng SSE/API.
                 result = await asyncio.to_thread(getattr(tools, fn), **args)

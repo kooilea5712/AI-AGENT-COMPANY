@@ -5,7 +5,7 @@ import subprocess
 
 import httpx
 
-from . import config
+from . import config, settings
 
 # Inkscape/ImageMagick cài bằng winget thường không nằm trong PATH của tiến trình đang chạy
 # nên thử thêm vài đường dẫn mặc định.
@@ -48,15 +48,15 @@ def _tool(name: str) -> dict:
     return {"ok": True, "version": version, "path": path}
 
 
-async def _combo(client: httpx.AsyncClient, name: str) -> dict:
-    """Gọi thật một yêu cầu 1 token tới combo; trả model nào đã phục vụ."""
+async def _role_check(role: str) -> dict:
+    """Gọi thật một yêu cầu nhỏ tới vai: trả ứng viên nào đã phục vụ và các ứng viên bị bỏ qua/lỗi."""
     from .llm.client import LLMClient
 
     try:
-        r = await LLMClient().chat(name, [{"role": "user", "content": "Trả lời đúng một chữ: ok"}], max_tokens=300)
-        return {"ok": True, "served_by": r.get("model")}
+        r = await LLMClient().chat(role, [{"role": "user", "content": "Trả lời đúng một chữ: ok"}], max_tokens=300)
+        return {"ok": True, "served_by": f"{r.get('connection')}/{r.get('model')}", "skipped": r.get("failed", [])}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:300]}
+        return {"ok": False, "error": str(e)[:400]}
 
 
 def _sandbox() -> dict:
@@ -79,7 +79,7 @@ def _sandbox() -> dict:
 
 async def check(deep: bool = False) -> dict:
     """deep=True gọi thật từng combo (chậm: Ollama phải nạp model). Mặc định chỉ kiểm cổng và công cụ."""
-    result: dict = {"llm_mode": config.LLM_MODE, "llm_base_url": config.LLM_BASE_URL}
+    result: dict = {}
     async with httpx.AsyncClient(timeout=10) as c:
         try:
             r = await c.get(f"{config.OLLAMA_URL}/api/tags")
@@ -93,12 +93,15 @@ async def check(deep: bool = False) -> dict:
             result["omniroute"] = {"ok": r.status_code == 200, "status": r.status_code}
         except Exception as e:  # noqa: BLE001
             result["omniroute"] = {"ok": False, "error": str(e)[:200]}
-    # Local model chạy tuần tự (12 GB VRAM) nên kiểm combo lần lượt, không gather.
-    result["combos"] = {}
-    if deep:
-        async with httpx.AsyncClient(timeout=180) as c:
-            for name in config.COMBOS:
-                result["combos"][name] = await _combo(c, name)
+    # Mỗi vai có chuỗi ứng viên; không gọi mạng ở chế độ nhanh, chỉ cho biết ứng viên nào sẽ bị bỏ qua và vì sao.
+    result["roles"] = {}
+    for role, meta in settings.ROLES.items():
+        chain = [{"connection": c["connection"], "model": c["model"], "skip": c["skip"]} for c in settings.candidates(role)]
+        result["roles"][role] = {"label": meta["label"], "chain": chain, "usable": any(not c["skip"] for c in chain)}
+    if deep:   # model local chạy tuần tự (12 GB VRAM) nên kiểm lần lượt, không gather
+        for role in settings.ROLES:
+            result["roles"][role].update(await _role_check(role))
     result["tools"] = {t: _tool(t) for t in config.REQUIRED_CLI_TOOLS}
     result["sandbox"] = _sandbox()
+    result["artcraft"] = {"vectorcraft": os.path.isfile(config.VECTORCRAFT_CLI), "pdfcraft": os.path.isfile(config.PDFCRAFT_CLI)}
     return result

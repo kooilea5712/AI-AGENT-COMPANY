@@ -1,11 +1,14 @@
 """Nạp prompt từ prompts/*.md MỖI LẦN dùng (không cache) để bạn sửa file là có hiệu lực ngay."""
-from pathlib import Path
-
 from . import config
 
 
 def _read(name: str) -> str:
     return (config.PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+
+
+def task_prompt(name: str) -> str:
+    """Đoạn chỉ dẫn cho một bước cụ thể (duyệt brief, lập kế hoạch...)."""
+    return _read(name)
 
 
 def _env_note() -> str:
@@ -22,9 +25,9 @@ def director_system(lessons: str, team: str) -> str:
     return _join(_read("hien-phap"), body, _read("phu-giam-doc"), _env_note())
 
 
-# Vai thực thi: tên trong plan.md ("VAI: ...") -> (file prompt, tên hiển thị, combo)
-ROLES = {"phần mềm": ("ky-su-phan-mem", "Kỹ sư phần mềm", "coder"),
-         "media": ("chuyen-vien-media", "Chuyên viên media", "coder")}
+# Vai thực thi: tên trong plan.json ("role") -> (file prompt, tên hiển thị, vai LLM)
+ROLES = {"software": ("ky-su-phan-mem", "Kỹ sư phần mềm", "engineer"),
+         "media": ("chuyen-vien-media", "Chuyên viên media", "media")}
 
 
 def specialist_system(role_file: str) -> str:
@@ -37,8 +40,12 @@ def specialist_system(role_file: str) -> str:
     return _join(_read("hien-phap"), body, _env_note())
 
 
-def qa_system() -> str:
-    return _join(_read("hien-phap"), _read("kiem-dinh"), _read("phu-kiem-dinh"), _env_note())
+def qa_author_system() -> str:
+    return _join(_read("hien-phap"), _read("kiem-dinh-thiet-ke"), _env_note())
+
+
+def qa_runner_system() -> str:
+    return _join(_read("hien-phap"), _read("kiem-thu-chay"), _env_note())
 
 
 def work_order(job_id: str, task_id: str, role: str, fields: dict[str, str]) -> str:

@@ -42,7 +42,7 @@ async def test_unknown_tool_and_escape_reported(tmp_path):
     r = await run_agent(llm, "coder", "s", "u", JobTools(tmp_path / "j"), lambda *a: None, 5)
     assert r.ok
     assert "Không có tool" in llm.seen[1][-1]["content"]
-    assert "ngoài thư mục job" in llm.seen[2][-1]["content"]
+    assert "ngoài thư mục được phép" in llm.seen[2][-1]["content"]
 
 
 async def test_step_limit(tmp_path):

@@ -40,4 +40,9 @@ SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "none")
 SANDBOX_MEMORY = os.getenv("SANDBOX_MEMORY", "2g")
 SANDBOX_CPUS = os.getenv("SANDBOX_CPUS", "2")
 
+# ArtCraft (bản Windows, chạy trên máy chứ không trong Docker). Đổi bằng .env nếu cài chỗ khác.
+VECTORCRAFT_CLI = os.getenv("VECTORCRAFT_CLI", str(Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "ArtCraft" / "VectorCraft" / "vectorcraft-cli.exe"))
+PDFCRAFT_CLI = os.getenv("PDFCRAFT_CLI", r"C:\Program Files\ArtCraft\PdfCraft\pdfcraft-cli.exe")
+DATA_DIR = Path(os.getenv("STUDIO_DATA_DIR") or Path.home() / ".studio-ai")
+
 REQUIRED_CLI_TOOLS = ["git", "python", "node", "ffmpeg", "ffprobe", "magick", "inkscape"]

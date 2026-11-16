@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   state TEXT NOT NULL,
-  fix_round INTEGER NOT NULL DEFAULT 0,   -- số vòng sửa đã dùng sau FAIL
-  asked INTEGER NOT NULL DEFAULT 0,       -- số lần Giám đốc đã hỏi lại (tối đa 1 lượt ở bản này)
+  fix_round INTEGER NOT NULL DEFAULT 0,   -- số vòng sửa đã dùng sau FAIL (trong một đợt)
+  asked INTEGER NOT NULL DEFAULT 0,       -- số lần Giám đốc đã hỏi lại (tối đa 1 lượt)
   questions TEXT,                         -- câu hỏi đang chờ chủ studio trả lời
-  note TEXT,                              -- ghi chú/phản hồi cần đưa cho bước kế tiếp
+  note TEXT,                              -- phản hồi/hướng dẫn cần đưa cho bước kế tiếp
   error TEXT,                             -- lý do dừng ở trạng thái blocked
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL
@@ -26,7 +26,37 @@ CREATE TABLE IF NOT EXISTS events (
   message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
+-- Task do Giám đốc chia trong plan.json; mỗi đợt (round) lập kế hoạch lại có bộ task riêng.
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL, round INTEGER NOT NULL, task_id TEXT NOT NULL, role TEXT NOT NULL,
+  title TEXT NOT NULL, depends TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
+  started REAL, ended REAL, report TEXT
+);
+CREATE INDEX IF NOT EXISTS tasks_job ON tasks(job_id, round);
+-- Hội thoại chủ studio <-> Giám đốc (chủ chỉ nói chuyện với Giám đốc).
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL, ts REAL NOT NULL, sender TEXT NOT NULL,   -- owner | director
+  text TEXT NOT NULL, files TEXT NOT NULL DEFAULT '[]',
+  delivered INTEGER NOT NULL DEFAULT 1                            -- tin của chủ gửi lúc job đang chạy: 0 cho tới khi Giám đốc đọc
+);
+CREATE INDEX IF NOT EXISTS messages_job ON messages(job_id, id);
+-- Mỗi lần commit bắt buộc sau khi agent chạy.
+CREATE TABLE IF NOT EXISTS commits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL, ts REAL NOT NULL, repo TEXT NOT NULL,     -- job | workspace
+  hash TEXT NOT NULL, message TEXT NOT NULL, files INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS commits_job ON commits(job_id, id);
 """
+
+# Cột thêm sau này: DB tạo từ bản trước được nâng cấp tại chỗ.
+MIGRATIONS = {
+    "jobs": {"blocked_from": "TEXT", "workspace": "TEXT", "base_branch": "TEXT", "round": "INTEGER NOT NULL DEFAULT 0"},
+    "events": {"actor": "TEXT"},
+}
 
 
 class DB:
@@ -36,15 +66,12 @@ class DB:
         self.lock = threading.Lock()
         with self.lock:
             self.conn.executescript(SCHEMA)
-            # Migration nhẹ cho DB tạo từ bản trước: thêm cột blocked_from nếu chưa có.
-            cols = [r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")]
-            if "blocked_from" not in cols:
-                self.conn.execute("ALTER TABLE jobs ADD COLUMN blocked_from TEXT")
-                self.conn.commit()
-            ecols = [r["name"] for r in self.conn.execute("PRAGMA table_info(events)")]
-            if "actor" not in ecols:
-                self.conn.execute("ALTER TABLE events ADD COLUMN actor TEXT")
-                self.conn.commit()
+            for table, cols in MIGRATIONS.items():
+                have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                for col, ddl in cols.items():
+                    if col not in have:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            self.conn.commit()
 
     def execute(self, sql: str, params=()):
         with self.lock:
