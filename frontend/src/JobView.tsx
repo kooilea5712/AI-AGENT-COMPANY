@@ -57,7 +57,7 @@ export default function JobView({ id, staff }: { id: string; staff: Person[] }) 
       {tab === "chat" && <Chat job={job} msgs={msgs} reload={load} setErr={setErr} />}
       {tab === "docs" && <Docs job={job} />}
       {tab === "log" && <Log events={events} />}
-      {tab === "files" && <Files id={id} files={files} />}
+      {tab === "files" && <Files id={id} files={files} job={job} />}
       {tab === "git" && <GitTab id={id} job={job} />}
     </div>
   );
@@ -360,46 +360,79 @@ function Log({ events }: { events: Ev[] }) {
   );
 }
 
-const TEXT_EXT = /\.(md|txt|py|js|ts|json|svg|html|css|csv|log|yml|yaml|toml|sh|ps1)$/i;
+const TEXT_EXT = /\.(md|txt|py|js|jsx|ts|tsx|json|svg|html|css|csv|log|yml|yaml|toml|sh|ps1|bat|ini|cfg|xml|rs|go|java|c|cpp|h|sql)$/i;
 const IMG_EXT = /\.(png|jpe?g|gif|webp)$/i;
+const VID_EXT = /\.(mp4|webm|mov|mkv)$/i;
+const AUD_EXT = /\.(mp3|wav|ogg|m4a)$/i;
+const FLAG: Record<string, [string, string]> = { A: ["mới", "ok"], M: ["đã sửa", "warn"], D: ["đã xoá", "bad"] };
 
-function Files({ id, files }: { id: string; files: FileRow[] }) {
+/** Hai nguồn file: Project trên máy (nơi code thật nằm khi job gắn thư mục) và Tài liệu job (brief, kế hoạch, báo cáo...). */
+function Files({ id, files, job }: { id: string; files: FileRow[]; job: Job }) {
+  const hasWs = !!job.workspace;
+  const [src, setSrc] = useState<"ws" | "job">(hasWs ? "ws" : "job");
+  const [ws, setWs] = useState<{ root: string; files: { path: string; size: number; changed: "A" | "M" | "D" | null }[]; truncated: boolean } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [onlyChanged, setOnlyChanged] = useState(false);
+  useEffect(() => {
+    if (!hasWs || src !== "ws") return;
+    const load = () => api.wsFiles(id).then(setWs).catch(() => {});
+    load(); const t = setInterval(load, 3000);     // làm mới: thấy file mới xuất hiện ngay giữa công đoạn
+    return () => clearInterval(t);
+  }, [id, src, hasWs]);
+  const url = (p: string) => (src === "ws" ? api.wsFileUrl(id, p) : api.fileUrl(id, p));
   useEffect(() => {
     setText("");
-    if (open && TEXT_EXT.test(open)) api.fileText(id, open).then((t) => setText(t.slice(0, 40000)));
-  }, [open, id]);
+    if (open && TEXT_EXT.test(open)) fetch(url(open)).then((r) => r.text()).then((t) => setText(t.slice(0, 60000))).catch(() => {});
+  }, [open, id, src]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const list: { path: string; size: number; changed?: "A" | "M" | "D" | null }[] = src === "ws" ? (ws?.files ?? []) : files;
+  const shown = onlyChanged ? list.filter((f) => f.changed) : list;
   const groups = useMemo(() => {
-    const g: Record<string, FileRow[]> = {};
-    files.forEach((f) => { const k = f.path.includes("/") ? f.path.split("/")[0] : "(gốc)"; (g[k] ||= []).push(f); });
+    const g: Record<string, typeof list> = {};
+    shown.forEach((f) => { const k = f.path.includes("/") ? f.path.split("/")[0] : "(gốc)"; (g[k] ||= []).push(f); });
     return g;
-  }, [files]);
+  }, [shown]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const changedCount = list.filter((f) => f.changed).length;
   return (
-    <div className="filespane">
-      <div className="filelist">
-        {Object.entries(groups).sort(([a], [b]) => (a === "deliverables" ? -1 : b === "deliverables" ? 1 : a.localeCompare(b))).map(([g, list]) => (
-          <div key={g}>
-            <div className="grp">{g === "deliverables" ? "📦 deliverables (sản phẩm giao)" : g === "inputs" ? "📎 inputs (file chủ đính kèm)" : g}</div>
-            {list.map((f) => (
-              <div key={f.path} className={"file" + (open === f.path ? " on" : "")} onClick={() => setOpen(f.path)}>
-                <span>{f.path.split("/").slice(g === "(gốc)" ? 0 : 1).join("/")}</span><span className="muted">{f.size} B</span>
-              </div>
-            ))}
+    <div>
+      {hasWs && (
+        <div className="toolbar">
+          <div className="chips">
+            <button className={src === "ws" ? "on" : ""} onClick={() => { setSrc("ws"); setOpen(null); }}>📁 Project trên máy</button>
+            <button className={src === "job" ? "on" : ""} onClick={() => { setSrc("job"); setOpen(null); }}>📄 Tài liệu của job</button>
           </div>
-        ))}
-        {files.length === 0 && <p className="muted">Chưa có file.</p>}
-      </div>
-      <div className="preview">
-        {!open && <p className="muted">Chọn một file để xem.</p>}
-        {open && (
-          <>
-            <div className="row between"><b>{open}</b><a className="btn" href={api.fileUrl(id, open)} download target="_blank" rel="noreferrer">Tải về</a></div>
-            {(IMG_EXT.test(open) || /\.svg$/i.test(open)) && <div className="checker"><img src={api.fileUrl(id, open)} alt={open} /></div>}
-            {TEXT_EXT.test(open) && (/\.md$/i.test(open) ? <div className="md"><Markdown>{text}</Markdown></div> : <pre>{text}</pre>)}
-            {!IMG_EXT.test(open) && !TEXT_EXT.test(open) && <p className="muted">Không xem trước được định dạng này; bấm “Tải về”.</p>}
-          </>
-        )}
+          {src === "ws" && <label><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> chỉ file job này đã đổi ({changedCount})</label>}
+          {src === "ws" && ws && <span className="muted small">{ws.root}{ws.truncated ? " · (chỉ hiện 1500 file đầu)" : ""}</span>}
+        </div>
+      )}
+      <div className="filespane">
+        <div className="filelist">
+          {Object.entries(groups).sort(([a, x], [b, y]) => (a === "deliverables" ? -1 : b === "deliverables" ? 1 : a.localeCompare(b))).map(([g, items]) => (
+            <div key={g}>
+              <div className="grp">{g === "deliverables" ? "📦 deliverables (sản phẩm giao)" : g === "inputs" ? "📎 inputs (file chủ đính kèm)" : g}</div>
+              {items.map((f) => (
+                <div key={f.path} className={"file" + (open === f.path ? " on" : "")} onClick={() => setOpen(f.path)}>
+                  <span>{f.path.split("/").slice(g === "(gốc)" ? 0 : 1).join("/")}{f.changed && <span className={"badge " + FLAG[f.changed][1]} style={{ marginLeft: 6 }}>{FLAG[f.changed][0]}</span>}</span>
+                  <span className="muted">{f.size} B</span>
+                </div>
+              ))}
+            </div>
+          ))}
+          {shown.length === 0 && <p className="muted">{src === "ws" && !ws ? "Đang tải…" : onlyChanged ? "Job này chưa đổi file nào trong project." : "Chưa có file."}</p>}
+        </div>
+        <div className="preview">
+          {!open && <p className="muted">Chọn một file để xem.</p>}
+          {open && (
+            <>
+              <div className="row between"><b>{open}</b><a className="btn" href={url(open)} download target="_blank" rel="noreferrer">Tải về</a></div>
+              {(IMG_EXT.test(open) || /\.svg$/i.test(open)) && <div className="checker"><img src={url(open)} alt={open} /></div>}
+              {VID_EXT.test(open) && <video src={url(open)} controls style={{ maxWidth: "100%" }} />}
+              {AUD_EXT.test(open) && <audio src={url(open)} controls />}
+              {TEXT_EXT.test(open) && (/\.md$/i.test(open) ? <div className="md"><Markdown>{text}</Markdown></div> : <pre className="code">{text}</pre>)}
+              {!IMG_EXT.test(open) && !TEXT_EXT.test(open) && !VID_EXT.test(open) && !AUD_EXT.test(open) && <p className="muted">Không xem trước được định dạng này; bấm “Tải về”.</p>}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

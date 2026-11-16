@@ -326,6 +326,59 @@ def get_file(job_id: str, path: str):
     return FileResponse(p, filename=p.name)
 
 
+# ---------------- file của project (workspace) ----------------
+_WS_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".idea", ".vscode", "dist", "build"}
+
+
+def _ws_root(job_id: str) -> Path:
+    ws = _job(job_id)["workspace"]
+    if not ws:
+        raise HTTPException(404, "Job này không gắn với thư mục project trên máy")
+    root = Path(ws).resolve()
+    if not root.is_dir():
+        raise HTTPException(404, f"Thư mục project không còn tồn tại: {root}")
+    return root
+
+
+@app.get("/jobs/{job_id}/workspace/files")
+def ws_files(job_id: str):
+    """Mọi file trong project (trừ .git, node_modules, __pycache__...), kèm cờ A/M/D cho file job này đã thêm/sửa/xoá
+    (gồm cả phần đang sửa dở chưa commit)."""
+    import os
+    root = _ws_root(job_id)
+    first = db.one("SELECT hash FROM commits WHERE job_id=? AND repo='workspace' ORDER BY id LIMIT 1", (job_id,))
+    try:
+        changed = gitops.changed_files(root, f"{first['hash']}^" if first else None)
+    except gitops.GitError:
+        changed = {}
+    out, truncated = [], False
+    for dirpath, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in _WS_SKIP)
+        for n in sorted(names):
+            if n.endswith(".pyc"):
+                continue
+            if len(out) >= 1500:
+                truncated = True
+                break
+            p = Path(dirpath) / n
+            rel = p.relative_to(root).as_posix()
+            out.append({"path": rel, "size": p.stat().st_size, "changed": changed.get(rel)})
+    for rel, c in changed.items():   # file bị xoá không còn trên đĩa nhưng vẫn nên hiện
+        if c == "D" and not any(f["path"] == rel for f in out):
+            out.append({"path": rel, "size": 0, "changed": "D"})
+    return {"root": str(root), "files": out, "truncated": truncated}
+
+
+@app.get("/jobs/{job_id}/workspace/files/{path:path}")
+def ws_file(job_id: str, path: str):
+    root = _ws_root(job_id)
+    p = (root / path).resolve()
+    # Cùng kiểu chặn thoát đường dẫn: chỉ file nằm trong project, và không cho đọc ruột .git.
+    if root not in p.parents or not p.is_file() or ".git" in p.relative_to(root).parts:
+        raise HTTPException(404, "Không có file")
+    return FileResponse(p, filename=p.name)
+
+
 # ---------------- nhân viên ----------------
 @app.get("/staff")
 def get_staff():

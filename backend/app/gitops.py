@@ -122,6 +122,25 @@ def commit_all(path: Path, message: str) -> dict:
     return {"hash": h, "files": n, "empty": n == 0}
 
 
+def changed_files(path: Path, base: str | None) -> dict[str, str]:
+    """File đã đổi trong project: {đường dẫn tương đối: A|M|D}. Gồm cả phần ĐÃ commit từ `base` (commit gốc của job) lẫn phần
+    ĐANG sửa dở chưa commit, để giao diện thấy code ngay giữa công đoạn chứ không phải chờ hết task."""
+    out: dict[str, str] = {}
+    if base and has_commits(path):
+        r = git(path, "-c", "core.quotepath=false", "diff", "--name-status", base, "HEAD", check=False)
+        for line in r.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                out[parts[-1]] = {"A": "A", "D": "D"}.get(parts[0][:1], "M")
+    r = git(path, "-c", "core.quotepath=false", "status", "--porcelain", check=False)
+    for line in r.stdout.splitlines():
+        code, name = line[:2], line[3:]
+        if " -> " in name:
+            name = name.split(" -> ")[-1]
+        out[name.strip('"')] = "A" if "?" in code or "A" in code else "D" if "D" in code else "M"
+    return out
+
+
 def history(path: Path, limit: int = 50) -> list[dict]:
     if not is_repo(path) or not has_commits(path):
         return []

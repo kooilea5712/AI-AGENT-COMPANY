@@ -153,3 +153,29 @@ def test_job_detail_survives_broken_testcases_json(client):
     (main.orch.job_dir(jid) / "qa" / "testcases.json").write_text('{"cases": [ {"id": "TC1" ', encoding="utf-8")   # JSON dở dang
     r = c.get(f"/jobs/{jid}")
     assert r.status_code == 200 and r.json()["testcases"] == []
+
+
+def test_workspace_files_show_real_code_with_changed_flags_even_uncommitted(client, tmp_path):
+    import subprocess
+    c, main = client
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    (ws / "app").mkdir()
+    (ws / "app" / "old.py").write_text("print('cũ')", encoding="utf-8")
+    from app import gitops
+    gitops.init_repo(ws)
+    subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
+    subprocess.run(["git", "-c", "user.name=a", "-c", "user.email=a@a", "commit", "-q", "-m", "init"], cwd=ws, check=True)
+    jid = main.orch.create_job("sửa", workspace=str(ws))
+    (ws / "app" / "compose.py").write_text("print('mới')", encoding="utf-8")        # file MỚI, chưa commit (đang làm dở giữa task)
+    (ws / "app" / "old.py").write_text("print('sửa')", encoding="utf-8")            # file CŨ bị sửa, chưa commit
+    (ws / "node_modules").mkdir(); (ws / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+    r = c.get(f"/jobs/{jid}/workspace/files").json()
+    files = {f["path"]: f["changed"] for f in r["files"]}
+    assert files["app/compose.py"] == "A" and files["app/old.py"] == "M"
+    assert not any(p.startswith("node_modules") or ".git/" in p for p in files)       # rác không hiện
+    assert c.get(f"/jobs/{jid}/workspace/files/app/compose.py").text == "print('mới')"
+    assert c.get(f"/jobs/{jid}/workspace/files/.git/HEAD").status_code == 404
+    assert c.get(f"/jobs/{jid}/workspace/files/..%5C..%5Cetc").status_code == 404
+    plain = main.orch.create_job("thường")
+    assert c.get(f"/jobs/{plain}/workspace/files").status_code == 404
