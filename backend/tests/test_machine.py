@@ -227,6 +227,25 @@ async def test_qa_fail_twice_then_blocked_and_retry(orch):
     assert j["state"] == m.EXECUTING and j["fix_round"] == 0 and "đừng dùng EXIF" in j["note"] and "@job/inputs/" in j["note"]
 
 
+async def test_owner_can_get_wrong_testcases_rewritten_after_fix_rounds(orch):
+    """Hết vòng sửa, chủ nói testcase sai: Kiểm định viết lại bộ testcase, và lời chủ vẫn tới Kỹ sư ở vòng sửa sau."""
+    llm = Script(director=director_front(), engineer=eng_ok() * 3,
+                 qa_author=qa()["qa_author"] + [wf("@job/qa/testcases.json", CASES), say("ĐÃ SỬA TESTCASE")],
+                 qa_runner=[say("KẾT QUẢ: FAIL sai")] * 4)
+    o = orch(llm)
+    jid = o.create_job("x")
+    await o.run(jid)
+    assert o.get(jid)["blocked_from"] == m.QA_RUN
+    o.retry(jid, "TC1 sai testcase: dùng lệnh cli.py create. Sản phẩm: thêm kiểm tra URL")
+    assert o.get(jid)["state"] == m.QA_DESIGN
+    llm.q["engineer"] = eng_ok()
+    await o.run(jid)
+    author_calls = [c[1] for c in llm.calls if c[0] == "qa_author"]
+    assert any("SỬA TESTCASE THEO CHỦ STUDIO" in c and "cli.py create" in c for c in author_calls)
+    eng_calls = [c[1] for c in llm.calls if c[0] == "engineer"]
+    assert any("thêm kiểm tra URL" in c and "KIỂM THỬ TRẢ FAIL" in c for c in eng_calls)
+
+
 async def test_runner_without_verdict_is_asked_again_then_fails_the_case(orch):
     llm = Script(director=director_front(), engineer=eng_ok() * 3, qa_author=qa()["qa_author"],
                  qa_runner=[say("xong rồi")] * 6)                        # không bao giờ kết luận đúng mẫu

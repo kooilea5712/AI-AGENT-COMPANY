@@ -51,10 +51,11 @@ def test_dangerous_command_is_contained(tools, tmp_path):
 
 def test_timeout_kills_container(tools, monkeypatch):
     monkeypatch.setattr(config, "COMMAND_TIMEOUT", 3)
+    ps = lambda: set(subprocess.run(["docker", "ps", "-q", "--filter", "name=studio-"], capture_output=True, text=True).stdout.split())
+    before = ps()                                                      # container của job thật đang chạy (nếu app đang mở)
     with pytest.raises(ToolError):
         tools.run_command("sleep 30")
-    left = subprocess.run(["docker", "ps", "-q", "--filter", "name=studio-"], capture_output=True, text=True).stdout
-    assert left.strip() == ""                                          # không bỏ sót container chạy ngầm
+    assert not (ps() - before)                                         # không bỏ sót container chạy ngầm
 
 
 def test_media_tools_present(tools):

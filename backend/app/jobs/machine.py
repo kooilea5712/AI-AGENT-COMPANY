@@ -245,6 +245,11 @@ class Orchestrator:
         if note or saved:
             self._owner_says(job_id, note or "(đính kèm file)", saved)
             fields["note"] = "CHỦ STUDIO HƯỚNG DẪN KHI TIẾP TỤC: " + self._note(note, saved)
+            # Hết vòng sửa mà chủ chỉ ra TESTCASE sai: cho Kiểm định viết lại bộ testcase trước (giữ id), rồi mới chạy/sửa sản phẩm.
+            # Không có nhánh này thì hướng dẫn chỉ tới Kỹ sư, bộ testcase sai giữ nguyên và job FAIL mãi.
+            if src == QA_RUN and re.search(r"test\s*case", note or "", re.I):
+                target = QA_DESIGN
+                fields["note"] = "SỬA TESTCASE THEO CHỦ STUDIO (Kỹ sư cũng đọc phần sản phẩm cần sửa): " + self._note(note, saved)
         self.set_state(job_id, target, **fields)
 
     def cancel(self, job_id: str):
@@ -606,7 +611,7 @@ class Orchestrator:
             spec = by_id.get(row["task_id"], {})
             role_file, role_name, llm_role = prompts.ROLES[row["role"]]
             fix = row["task_id"].startswith("FIX")
-            known = ["Python có thư viện chuẩn và Pillow; pip install bị chặn."]
+            known = [prompts.sandbox_note()]
             if j["note"]:
                 known.append("PHẢN HỒI CẦN XỬ LÝ (nguyên văn):\n" + j["note"])
             inbox = self._inbox(job_id)
@@ -725,7 +730,9 @@ class Orchestrator:
             return self._block(job_id, "Kiểm định không tạo được testcases.json hợp lệ: " + "; ".join(errors))
         self.event(job_id, "qa", f"đã {'sửa' if repair else 'thiết kế'} {len(cases['cases'])} testcase", staff.QA_AUTHOR)
         self._commit(job_id, f"testcase ({len(cases['cases'])} case)")
-        self.set_state(job_id, QA_RUN, note=None)
+        # Hướng dẫn của chủ còn phần sửa SẢN PHẨM: giữ lại để Kỹ sư đọc ở vòng sửa kế tiếp.
+        owner = (j["note"] or "").startswith("SỬA TESTCASE THEO CHỦ STUDIO")
+        self.set_state(job_id, QA_RUN, note=("CHỦ STUDIO HƯỚNG DẪN: " + j["note"].split(": ", 1)[1]) if owner else None)
 
     # --- Bước 6b: Kiểm thử viên chạy HẾT testcase + code kiểm lại độc lập ---------------------
     async def _do_qa_run(self, job_id: str):
@@ -771,8 +778,10 @@ class Orchestrator:
             return self.set_state(job_id, HANDOFF)
         fails = "\n".join(f"- {x['id']} {x['title']}: {x['why']}" for x in real if x["final"] != "PASS")
         if j["fix_round"] < config.MAX_FIX_ROUNDS:
+            owner = j["note"] if (j["note"] or "").startswith("CHỦ STUDIO HƯỚNG DẪN") else ""   # không để báo cáo FAIL ghi đè lời chủ
             self.set_state(job_id, EXECUTING, fix_round=j["fix_round"] + 1,
-                           note=f"KIỂM THỬ TRẢ FAIL {len(real) - passed}/{len(real)} (nguyên văn, xem thêm @job/{rname}):\n{fails}")
+                           note=(owner + "\n\n" if owner else "")
+                           + f"KIỂM THỬ TRẢ FAIL {len(real) - passed}/{len(real)} (nguyên văn, xem thêm @job/{rname}):\n{fails}")
         else:
             self._block(job_id, f"Vẫn FAIL sau {config.MAX_FIX_ROUNDS} vòng sửa; cần chủ studio quyết định. Xem {rname}")
 

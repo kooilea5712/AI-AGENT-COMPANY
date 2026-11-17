@@ -11,9 +11,25 @@ def task_prompt(name: str) -> str:
     return _read(name)
 
 
+def sandbox_note() -> str:
+    """Có gì trong môi trường chạy lệnh. Phải khớp docker/sandbox/Dockerfile và SANDBOX_NETWORK, nếu không model
+    sẽ tin nhầm (vd. tưởng không có mạng/thư viện) rồi bỏ cuộc hoặc 'giả định' đã chạy xong."""
+    if config.SANDBOX_MODE != "docker":
+        return "Lệnh chạy trực tiếp trên máy (PowerShell); thư viện Python là những gì máy đã cài."
+    libs = ("Container có sẵn: ffmpeg/ffprobe, ImageMagick (magick), Inkscape, git, font DejaVu/Noto (có emoji màu); "
+            "Python 3.12 với pillow, numpy, moviepy, edge-tts, httpx, requests, beautifulsoup4, fastapi, uvicorn, jinja2, "
+            "pyyaml, python-dotenv, pydantic, pytest, playwright (đã có Chromium).")
+    if config.SANDBOX_NETWORK == "none":
+        return libs + " KHÔNG có mạng: không pip install, không gọi dịch vụ online (edge-tts cũng không chạy được)."
+    return (libs + " CÓ mạng internet (edge-tts, gọi API, cào web dùng được). pip install không giữ lại ở lệnh sau "
+            "(mỗi lệnh là container mới): cần thư viện khác thì cài và dùng trong CÙNG một lệnh.")
+
+
 def _env_note() -> str:
     """Phụ lục môi trường phải khớp chế độ sandbox: container Linux (bash) hay PowerShell trên máy."""
-    return _read("phu-moi-truong-docker" if config.SANDBOX_MODE == "docker" else "phu-moi-truong")
+    if config.SANDBOX_MODE == "docker":
+        return _read("phu-moi-truong-docker").replace("{moi_truong_sandbox}", sandbox_note())
+    return _read("phu-moi-truong")
 
 
 def _join(*parts: str) -> str:
